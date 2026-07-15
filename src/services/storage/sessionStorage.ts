@@ -1,0 +1,30 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const TOKEN_KEY = 'hs360_token';
+const REMEMBERED_EMAIL_KEY = 'hs360_remembered_email';
+
+export const sessionStorage = {
+  async getToken(): Promise<string | null> {
+    return AsyncStorage.getItem(TOKEN_KEY);
+  },
+
+  async setToken(token: string): Promise<void> {
+    await AsyncStorage.setItem(TOKEN_KEY, token);
+  },
+
+  async clearToken(): Promise<void> {
+    await AsyncStorage.removeItem(TOKEN_KEY);
+  },
+
+  async getRememberedEmail(): Promise<string | null> {
+    return AsyncStorage.getItem(REMEMBERED_EMAIL_KEY);
+  },
+
+  async setRememberedEmail(email: string): Promise<void> {
+    await AsyncStorage.setItem(REMEMBERED_EMAIL_KEY, email);
+  },
+
+  async clearRememberedEmail(): Promise<void> {
+    await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+  },
+};
