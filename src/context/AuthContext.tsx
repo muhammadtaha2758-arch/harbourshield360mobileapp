@@ -13,6 +13,7 @@ interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<RegisterResult>;
   logout: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -138,10 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
     return authService.register(payload);
   }, []);
 
-  const logout = useCallback(async (): Promise<void> => {
-    if (!env.useMockAuth) {
-      await authService.logout();
-    }
+  const clearLocalSession = useCallback(async (): Promise<void> => {
     await sessionStorage.clearToken();
     setAuthToken(null);
     setState({
@@ -150,6 +148,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       isInitializing: false,
     });
   }, []);
+
+  const logout = useCallback(async (): Promise<void> => {
+    if (!env.useMockAuth) {
+      await authService.logout();
+    }
+    await clearLocalSession();
+  }, [clearLocalSession]);
+
+  const deleteAccount = useCallback(async (): Promise<void> => {
+    if (!env.useMockAuth) {
+      await authService.deleteAccount();
+    }
+    await clearLocalSession();
+  }, [clearLocalSession]);
 
   const refreshUser = useCallback(async (): Promise<void> => {
     await refreshUserData(true);
@@ -161,9 +173,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       login,
       register,
       logout,
+      deleteAccount,
       refreshUser,
     }),
-    [login, register, logout, refreshUser, state],
+    [login, register, logout, deleteAccount, refreshUser, state],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

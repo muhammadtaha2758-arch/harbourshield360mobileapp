@@ -50,7 +50,12 @@ const FAQ_ITEMS: FaqItem[] = [
   {
     category: 'Account',
     q: 'Can I cancel my subscription?',
-    a: 'Yes, you can cancel your subscription at any time. Go to your account settings and select the cancellation option.',
+    a: 'Subscriptions and billing are managed outside the mobile app through HarbourShield. Contact support at info@harborshield360.com or +1 469-327-8930 to cancel or change your plan.',
+  },
+  {
+    category: 'Account',
+    q: 'How do I delete my account?',
+    a: 'Open Profile, scroll to Account, and tap Delete Account. You will be asked to confirm before your account and personal data are permanently deleted.',
   },
   {
     category: 'Documents',

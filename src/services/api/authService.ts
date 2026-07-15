@@ -195,4 +195,20 @@ export const authService = {
       // Local session is cleared regardless of network errors.
     }
   },
+
+  async deleteAccount(): Promise<void> {
+    try {
+      const response = await httpClient.delete<{ success?: boolean; message?: string }>(
+        env.mobileAuth.deleteAccount,
+      );
+      if (response.data.success === false) {
+        throw new Error(response.data.message || 'Unable to delete account.');
+      }
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      throw parseApiError(error, 'Unable to delete account. Please try again.');
+    }
+  },
 };

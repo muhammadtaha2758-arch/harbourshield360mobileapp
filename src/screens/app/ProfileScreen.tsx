@@ -11,11 +11,14 @@ import {
 import { DrawerActions, useNavigation } from '@react-navigation/native';
 import type { NavigationProp } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { portalService } from '../../services/api/portalService';
+import { ConfirmModal } from '../../components/ConfirmModal';
+import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
+import { useAuth } from '../../context/AuthContext';
+import type { AppDrawerParamList } from '../../navigation/types';
+import { portalService } from '../../services/api/portalService';
 import { colors } from '../../theme/colors';
 import { portalScreenLayout } from '../../theme/portalScreenLayout';
-import type { AppDrawerParamList } from '../../navigation/types';
 import {
   emptyProfileForm,
   fileLabelFromUrl,
@@ -24,12 +27,12 @@ import {
   subscriptionPlanLabel,
   type ProfileFormState,
 } from '../../utils/profileMapping';
-import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 
 const SUBSCRIPTION_HINT = 'Plan ID: 1 = Basic, 2 = Premium, 3 = Enterprise';
 
 export function ProfileScreen(): React.JSX.Element {
   const navigation = useNavigation<NavigationProp<AppDrawerParamList>>();
+  const { deleteAccount } = useAuth();
   const [form, setForm] = useState<ProfileFormState>(emptyProfileForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -37,10 +40,28 @@ export function ProfileScreen(): React.JSX.Element {
   const [driverLicenseUri, setDriverLicenseUri] = useState<string | null>(null);
   const [driverLicenseName, setDriverLicenseName] = useState('');
   const [driverLicenseType, setDriverLicenseType] = useState<string | null>(null);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const patchForm = useCallback((patch: Partial<ProfileFormState>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   }, []);
+
+  const confirmDeleteAccount = useCallback(async (): Promise<void> => {
+    try {
+      setDeletingAccount(true);
+      await deleteAccount();
+      setDeleteModalVisible(false);
+      toastAlert('Account deleted', 'Your account has been permanently deleted.');
+    } catch (error) {
+      toastAlert(
+        'Delete account',
+        error instanceof Error ? error.message : 'Unable to delete account. Please try again.',
+      );
+    } finally {
+      setDeletingAccount(false);
+    }
+  }, [deleteAccount]);
 
   const loadProfile = useCallback(async () => {
     try {
@@ -355,7 +376,39 @@ export function ProfileScreen(): React.JSX.Element {
         >
           {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveBtnText}>Save Profile</Text>}
         </Pressable>
+
+        <View style={styles.dangerCard}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          <Text style={styles.dangerCopy}>
+            Permanently delete your HarbourShield account and associated personal data. This cannot be undone.
+          </Text>
+          <Pressable
+            style={({ pressed }) => [styles.deleteBtn, pressed && styles.dim]}
+            onPress={() => setDeleteModalVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Delete account"
+          >
+            <Text style={styles.deleteBtnText}>Delete Account</Text>
+          </Pressable>
+        </View>
       </ScrollView>
+
+      <ConfirmModal
+        visible={deleteModalVisible}
+        title="Delete account?"
+        message="This permanently deletes your account and personal data. You will be signed out and cannot undo this action."
+        confirmLabel="Delete Account"
+        destructive
+        confirming={deletingAccount}
+        onCancel={() => {
+          if (!deletingAccount) {
+            setDeleteModalVisible(false);
+          }
+        }}
+        onConfirm={() => {
+          void confirmDeleteAccount();
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -436,6 +489,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   saveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  dangerCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#F3C6CB',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  dangerCopy: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  deleteBtn: {
+    minHeight: 46,
+    borderRadius: 12,
+    backgroundColor: colors.danger,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteBtnText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',

@@ -22,6 +22,7 @@ export const env = {
     resendVerification: 'mobile/auth/resend-verification',
     me: 'mobile/auth/me',
     logout: 'mobile/auth/logout',
+    deleteAccount: 'mobile/auth/account',
     forgotPassword: 'mobile/auth/forgot-password',
     setupPassword: 'mobile/auth/setup-password',
   },
