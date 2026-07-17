@@ -87,7 +87,7 @@ export function SignUpScreen(): React.JSX.Element {
         >
           <AuthHero
             title="Create Account"
-            subtitle={'Sign up to manage your projects,\ninvoices and clients.'}
+            subtitle={'Sign up to track your project\nand stay connected.'}
             gradientId="signUpHeroFadeIntoPanel"
           />
 

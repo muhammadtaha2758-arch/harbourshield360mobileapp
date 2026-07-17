@@ -12,6 +12,7 @@ import type { MessagesStackParamList } from '../../navigation/types';
 import { buildConversationPreviews, enrichConversationSources, type ConversationPreview } from '../../utils/chatMapping';
 import { PortalSearchBar } from '../../components/PortalSearchBar';
 import { ListFilterSheet } from '../../components/ListFilterSheet';
+import { CreateMeetingRoomSheet } from '../../components/CreateMeetingRoomSheet';
 import { ChatHeaderAvatar } from '../../components/ChatHeaderAvatar';
 import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
@@ -30,6 +31,7 @@ export function MessagesScreen(): React.JSX.Element {
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>(DEFAULT_SORT);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [createRoomOpen, setCreateRoomOpen] = useState(false);
 
   const load = useCallback(async (isRefresh: boolean) => {
     try {
@@ -145,7 +147,12 @@ export function MessagesScreen(): React.JSX.Element {
         </View>
 
         <Text style={styles.screenTitle}>Messages{'\n'}Chat</Text>
-        <Pressable style={styles.ctaButton}>
+        <Pressable
+          style={styles.ctaButton}
+          onPress={() => setCreateRoomOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Create meeting room"
+        >
           <Text style={styles.ctaText}>+ Create Meeting Room</Text>
         </Pressable>
       </View>
@@ -183,6 +190,14 @@ export function MessagesScreen(): React.JSX.Element {
           </Pressable>
         ))}
       </ScrollView>
+
+      <CreateMeetingRoomSheet
+        visible={createRoomOpen}
+        onClose={() => setCreateRoomOpen(false)}
+        onCreated={() => {
+          load(true).catch(() => undefined);
+        }}
+      />
 
       <ListFilterSheet
         visible={filterOpen}

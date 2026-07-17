@@ -145,7 +145,7 @@ export function LoginScreen(): React.JSX.Element {
   const heroTitle = isForgotPassword ? 'Reset Password' : 'Welcome Back!';
   const heroSubtitle = isForgotPassword
     ? 'Enter your email and we will send\na password setup link.'
-    : 'Sign in to manage your projects,\ninvoices and clients.';
+    : 'Sign in to track your project\nand stay connected.';
 
   const primaryButtonLabel = loading
     ? isForgotPassword

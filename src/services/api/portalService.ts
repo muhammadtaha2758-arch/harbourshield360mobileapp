@@ -923,6 +923,91 @@ export const portalService = {
     }
   },
 
+  async createChatGroup(payload: {
+    name?: string;
+    inviteEmails?: string[];
+  }): Promise<{ group: ChatGroup; emailsFailed: string[] }> {
+    if (env.useMockAuth) {
+      return {
+        group: {
+          id: `mock-g-${Date.now()}`,
+          name: payload.name || 'Meeting Room',
+          title: payload.name || 'Meeting Room',
+          members: [],
+        },
+        emailsFailed: [],
+      };
+    }
+    try {
+      const formData = new FormData();
+      if (payload.name?.trim()) {
+        formData.append('name', payload.name.trim());
+      }
+      for (const email of payload.inviteEmails ?? []) {
+        formData.append('invite_emails[]', email);
+      }
+      const response = await httpClient.post<{
+        success?: boolean;
+        error?: string;
+        group?: ChatGroup;
+        emails_failed?: string[];
+      }>(env.mobileMessages.createGroup, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      if (response.data.success !== true || !response.data.group) {
+        throw new Error(response.data.error || 'Unable to create meeting room.');
+      }
+      return {
+        group: response.data.group,
+        emailsFailed: response.data.emails_failed ?? [],
+      };
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      const axiosError = error as AxiosError<{ error?: string; message?: string }>;
+      const serverError = axiosError.response?.data?.error;
+      if (serverError) {
+        throw new Error(serverError);
+      }
+      throw getError(error, 'Unable to create meeting room.');
+    }
+  },
+
+  async acceptMeetingRoomInvitation(token: string): Promise<{
+    group: ChatGroup;
+    currentUserId: string;
+    message?: string;
+  }> {
+    try {
+      const response = await httpClient.post<{
+        success?: boolean;
+        error?: string;
+        message?: string;
+        group?: ChatGroup;
+        current_user_id?: number | string;
+      }>(env.mobileMessages.acceptInvitation(token));
+      if (response.data.success !== true || !response.data.group || response.data.current_user_id == null) {
+        throw new Error(response.data.error || 'Unable to accept meeting-room invitation.');
+      }
+      return {
+        group: response.data.group,
+        currentUserId: String(response.data.current_user_id),
+        message: response.data.message,
+      };
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      const axiosError = error as AxiosError<{ error?: string; message?: string }>;
+      throw new Error(
+        axiosError.response?.data?.error ||
+          axiosError.response?.data?.message ||
+          'Unable to accept meeting-room invitation.',
+      );
+    }
+  },
+
   async getDirectMessages(peerUserId: number | string, limit = 50): Promise<ChatMessageRecord[]> {
     if (env.useMockAuth) {
       return [];

@@ -20,6 +20,7 @@ import { ChatHeaderAvatar } from '../../components/ChatHeaderAvatar';
 import { ChatMessageBubble } from '../../components/ChatMessageBubble';
 import { mapMessagesToBubbles, type ChatBubble } from '../../utils/chatMapping';
 import { openChatAttachment, type ChatAttachmentKind } from '../../utils/chatAttachment';
+import { captureImageWithCamera, promptImageSource } from '../../utils/imageSource';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const PREVIEW_IMAGE_MAX_H = Math.round(Dimensions.get('window').height * 0.72);
@@ -269,6 +270,21 @@ export function ChatScreen(): React.JSX.Element {
       setShowAttachmentMenu(false);
 
       try {
+        if (attachmentType === 'photo') {
+          const source = await promptImageSource();
+          if (!source) {
+            return;
+          }
+          if (source === 'camera') {
+            const captured = await captureImageWithCamera();
+            if (!captured) {
+              return;
+            }
+            await uploadAttachment(captured.uri, captured.name, captured.type, 'photo');
+            return;
+          }
+        }
+
         const [file] = await pick({
           type: attachmentType === 'photo' ? [types.images] : [types.pdf, types.doc, types.docx, types.plainText],
           allowMultiSelection: false,

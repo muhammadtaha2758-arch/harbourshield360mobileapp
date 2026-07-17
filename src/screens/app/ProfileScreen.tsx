@@ -27,6 +27,7 @@ import {
   subscriptionPlanLabel,
   type ProfileFormState,
 } from '../../utils/profileMapping';
+import { captureImageWithCamera, promptImageSource } from '../../utils/imageSource';
 
 const SUBSCRIPTION_HINT = 'Plan ID: 1 = Basic, 2 = Premium, 3 = Enterprise';
 
@@ -87,6 +88,15 @@ export function ProfileScreen(): React.JSX.Element {
     name: string;
     type: string | null;
   } | null> => {
+    const source = await promptImageSource();
+    if (!source) {
+      return null;
+    }
+
+    if (source === 'camera') {
+      return captureImageWithCamera();
+    }
+
     const [file] = await pick({
       type: [types.images],
       allowMultiSelection: false,

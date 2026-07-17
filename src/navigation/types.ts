@@ -1,5 +1,7 @@
+import type { NavigatorScreenParams } from '@react-navigation/native';
+
 export type AppDrawerParamList = {
-  AppTabs: undefined;
+  AppTabs: NavigatorScreenParams<AppTabParamList> | undefined;
   Agreements: undefined;
 };
 
@@ -7,7 +9,7 @@ export type AppTabParamList = {
   DashboardTab: undefined;
   ScheduleTab: undefined;
   ProjectsTab: undefined;
-  MessagesTab: undefined;
+  MessagesTab: NavigatorScreenParams<MessagesStackParamList> | undefined;
   PhotosMediaTab: undefined;
   ProfileTab: undefined;
   EstimatesInvoicesTab: undefined;
@@ -57,5 +59,5 @@ export type LoginParams = {
 export type AppRootStackParamList = {
   Login: LoginParams | undefined;
   SignUp: undefined;
-  AppShell: undefined;
+  AppShell: NavigatorScreenParams<AppDrawerParamList> | undefined;
 };

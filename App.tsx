@@ -6,6 +6,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider } from './src/context/AuthContext';
 import { ToastProvider } from './src/context/ToastContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { navigationRef } from './src/navigation/navigationRef';
+import { MeetingRoomInvitationHandler } from './src/components/MeetingRoomInvitationHandler';
 import { colors } from './src/theme/colors';
 
 function App(): React.JSX.Element {
@@ -14,8 +16,9 @@ function App(): React.JSX.Element {
       <SafeAreaProvider>
         <ToastProvider>
           <AuthProvider>
-            <NavigationContainer>
+            <NavigationContainer ref={navigationRef}>
               <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+              <MeetingRoomInvitationHandler />
               <RootNavigator />
             </NavigationContainer>
           </AuthProvider>

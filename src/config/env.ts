@@ -85,6 +85,8 @@ export const env = {
   mobileMessages: {
     users: 'mobile/messages/users',
     groups: 'mobile/messages/groups',
+    createGroup: 'mobile/messages/groups',
+    acceptInvitation: (token: string) => `mobile/messages/invitations/${token}/accept`,
     directMessages: (userId: number | string) => `mobile/messages/direct/${userId}`,
     sendDirect: 'mobile/messages/direct',
     markDirectRead: (userId: number | string) => `mobile/messages/direct/${userId}/read`,

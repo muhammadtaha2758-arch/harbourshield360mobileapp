@@ -32,6 +32,7 @@ import { DEFAULT_SORT } from '../../types/listFilters';
 import { applyListFilters } from '../../utils/listFiltering';
 import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
+import { captureImageWithCamera, promptImageSource } from '../../utils/imageSource';
 
 type PhotosMediaScreenNavigation = CompositeNavigationProp<
   BottomTabNavigationProp<AppTabParamList, 'PhotosMediaTab'>,
@@ -269,6 +270,22 @@ export function PhotosMediaScreen(): React.JSX.Element {
 
   const onPickPhoto = useCallback(async () => {
     try {
+      const source = await promptImageSource();
+      if (!source) {
+        return;
+      }
+
+      if (source === 'camera') {
+        const captured = await captureImageWithCamera();
+        if (!captured) {
+          return;
+        }
+        setUploadPhotoUri(captured.uri);
+        setUploadPhotoName(captured.name);
+        setUploadPhotoType(captured.type ?? 'image/jpeg');
+        return;
+      }
+
       const [file] = await pick({
         type: [types.images],
         allowMultiSelection: false,

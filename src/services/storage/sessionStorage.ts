@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const TOKEN_KEY = 'hs360_token';
 const REMEMBERED_EMAIL_KEY = 'hs360_remembered_email';
+const PENDING_MEETING_INVITATION_KEY = 'hs360_pending_meeting_invitation';
 
 export const sessionStorage = {
   async getToken(): Promise<string | null> {
@@ -26,5 +27,17 @@ export const sessionStorage = {
 
   async clearRememberedEmail(): Promise<void> {
     await AsyncStorage.removeItem(REMEMBERED_EMAIL_KEY);
+  },
+
+  async getPendingMeetingInvitation(): Promise<string | null> {
+    return AsyncStorage.getItem(PENDING_MEETING_INVITATION_KEY);
+  },
+
+  async setPendingMeetingInvitation(token: string): Promise<void> {
+    await AsyncStorage.setItem(PENDING_MEETING_INVITATION_KEY, token);
+  },
+
+  async clearPendingMeetingInvitation(): Promise<void> {
+    await AsyncStorage.removeItem(PENDING_MEETING_INVITATION_KEY);
   },
 };
