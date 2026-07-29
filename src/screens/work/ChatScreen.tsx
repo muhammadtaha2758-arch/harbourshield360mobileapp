@@ -1,6 +1,6 @@
 import { toastAlert } from '../../utils/toastAlert';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Dimensions, Image, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
   errorCodes,
   isErrorWithCode,
@@ -9,7 +9,7 @@ import {
   types,
   type DocumentPickerResponse,
 } from '@react-native-documents/picker';
-import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { portalService } from '../../services/api/portalService';
@@ -110,21 +110,46 @@ export function ChatScreen(): React.JSX.Element {
   const [attachmentPreview, setAttachmentPreview] = useState<{ url: string; fileName: string } | null>(null);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
   const chatScrollRef = useRef<ScrollView | null>(null);
+  const loadInFlightRef = useRef(false);
+  const sendingRef = useRef(false);
+  const uploadingRef = useRef(false);
 
   const chatListItems = useMemo(() => buildChatListItems(messages), [messages]);
 
-  const loadMessages = useCallback(async () => {
+  useEffect(() => {
+    sendingRef.current = sending;
+  }, [sending]);
+
+  useEffect(() => {
+    uploadingRef.current = uploadingAttachment;
+  }, [uploadingAttachment]);
+
+  const loadMessages = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true;
     if (chatType === 'direct' && !peerUserId) {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
       return;
     }
     if (chatType === 'group' && !groupId) {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
+      return;
+    }
+    if (silent && (sendingRef.current || uploadingRef.current || loadInFlightRef.current)) {
+      return;
+    }
+    if (loadInFlightRef.current) {
       return;
     }
 
+    loadInFlightRef.current = true;
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+      }
       let records: ChatMessageRecord[] = [];
       if (chatType === 'group' && groupId) {
         records = await portalService.getGroupMessages(groupId);
@@ -135,15 +160,37 @@ export function ChatScreen(): React.JSX.Element {
       }
       setMessages(mapMessagesToBubbles(records, currentUserId));
     } catch (error) {
-      toastAlert('Chat', error instanceof Error ? error.message : 'Failed to load messages.');
+      if (!silent) {
+        toastAlert('Chat', error instanceof Error ? error.message : 'Failed to load messages.');
+      }
     } finally {
-      setLoading(false);
+      loadInFlightRef.current = false;
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [chatType, currentUserId, groupId, peerUserId]);
 
-  useEffect(() => {
-    loadMessages().catch(() => setLoading(false));
-  }, [loadMessages]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadMessages();
+
+      const intervalId = setInterval(() => {
+        void loadMessages({ silent: true });
+      }, 10000);
+
+      const appStateSub = AppState.addEventListener('change', (nextState) => {
+        if (nextState === 'active') {
+          void loadMessages({ silent: true });
+        }
+      });
+
+      return () => {
+        clearInterval(intervalId);
+        appStateSub.remove();
+      };
+    }, [loadMessages]),
+  );
 
   const onSendMessage = async (): Promise<void> => {
     const text = messageInput.trim();

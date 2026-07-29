@@ -12,7 +12,12 @@ export type HailImpactHistoryRecord = {
   date?: string;
   report?: {
     dateTimeISO?: string;
+    hailIN?: number | string;
+    detail?: Record<string, unknown>;
   };
+  hail_size?: number | string;
+  max_hail?: number | string;
+  distance_mi?: number | string;
 };
 
 type HailImpactHistoryResponse = {
@@ -51,7 +56,7 @@ export const nexradService = {
   },
 };
 
-/** Skip HTTP when app runs fully offline mock (no nexrad in mock dashboard). */
+/** Skip HTTP when app runs fully offline mock auth (no nexrad without a session). */
 export function canLoadNexradData(): boolean {
-  return !env.useMockAuth;
+  return env.useMockAuth !== true;
 }

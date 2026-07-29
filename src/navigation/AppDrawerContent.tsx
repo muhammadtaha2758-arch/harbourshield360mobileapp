@@ -21,6 +21,7 @@ import MessagesIcon from '../assets/icons/drawer-icons/Messages.svg';
 import ServicesIcon from '../assets/icons/drawer-icons/services.svg';
 import FinancingIcon from '../assets/icons/drawer-icons/financing.svg';
 import ProfileIcon from '../assets/icons/drawer-icons/profile.svg';
+import VendorsIcon from '../assets/icons/drawer-icons/vendors.svg';
 import LogoutIcon from '../assets/icons/drawer-icons/logout.svg';
 
 type DrawerRouteName = keyof AppDrawerParamList;
@@ -34,6 +35,7 @@ type MenuRouteName =
   | 'Schedule'
   | 'Messages'
   | 'ServiceRequests'
+  | 'Vendors'
   | 'Financing'
   | 'Profile';
 
@@ -47,6 +49,7 @@ const MENU_ICONS = {
   Schedule: ScheduleIcon,
   Messages: MessagesIcon,
   ServiceRequests: ServicesIcon,
+  Vendors: VendorsIcon,
   Financing: FinancingIcon,
   Profile: ProfileIcon,
 } as const;
@@ -61,7 +64,8 @@ const MENU_ITEMS: { name: MenuRouteName; label: string }[] = [
   { name: 'Schedule', label: 'Schedule' },
   { name: 'Messages', label: 'Messages' },
   { name: 'ServiceRequests', label: 'Services Requests' },
-  { name: 'Financing', label: 'Finacing' },
+  { name: 'Vendors', label: 'Vendors' },
+  { name: 'Financing', label: 'Financing' },
   { name: 'Profile', label: 'Profile' },
 ];
 
@@ -75,6 +79,7 @@ const MENU_TO_TAB_MAP: Partial<Record<MenuRouteName, keyof AppTabParamList>> = {
   EstimatesInvoices: 'EstimatesInvoicesTab',
   Documents: 'DocumentsTab',
   ServiceRequests: 'ServiceRequestsTab',
+  Vendors: 'VendorsTab',
   Financing: 'FinancingTab',
 };
 

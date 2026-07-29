@@ -234,22 +234,24 @@ export async function enrichConversationSources(
   currentUserId: string | undefined,
   fetchDirect: (id: number | string) => Promise<ChatMessageRecord[]>,
   fetchGroup: (id: number | string) => Promise<ChatMessageRecord[]>,
-): Promise<{ admins: ChatContact[]; groups: ChatGroup[] }> {
-  const enrichedAdmins = await Promise.all(
-    admins.map(async (admin) => {
-      const record = admin as Record<string, unknown>;
-      try {
-        const msgs = await fetchDirect(admin.id);
-        const last = pickLatestMessage(msgs);
-        if (last) {
-          return applyMessageToRecord(record, last, currentUserId) as ChatContact;
-        }
-      } catch {
-        // Fall back to list payload when thread fetch fails.
+  peers: ChatContact[] = [],
+): Promise<{ admins: ChatContact[]; groups: ChatGroup[]; peers: ChatContact[] }> {
+  const enrichDirect = async (contact: ChatContact): Promise<ChatContact> => {
+    const record = contact as Record<string, unknown>;
+    try {
+      const msgs = await fetchDirect(contact.id);
+      const last = pickLatestMessage(msgs);
+      if (last) {
+        return applyMessageToRecord(record, last, currentUserId) as ChatContact;
       }
-      return admin;
-    }),
-  );
+    } catch {
+      // Fall back to list payload when thread fetch fails.
+    }
+    return contact;
+  };
+
+  const enrichedAdmins = await Promise.all(admins.map(enrichDirect));
+  const enrichedPeers = await Promise.all(peers.map(enrichDirect));
 
   const enrichedGroups = await Promise.all(
     groups.map(async (group) => {
@@ -267,13 +269,14 @@ export async function enrichConversationSources(
     }),
   );
 
-  return { admins: enrichedAdmins, groups: enrichedGroups };
+  return { admins: enrichedAdmins, groups: enrichedGroups, peers: enrichedPeers };
 }
 
 export function buildConversationPreviews(
   admins: ChatContact[],
   groups: ChatGroup[],
   currentUserId?: string,
+  peers: ChatContact[] = [],
 ): ConversationPreview[] {
   const items: ConversationPreview[] = [];
 
@@ -294,20 +297,29 @@ export function buildConversationPreviews(
     });
   }
 
-  for (const admin of admins) {
-    const adminRecord = admin as Record<string, unknown>;
-    const lastMessageAt = lastMessageIso(adminRecord);
-    const adminName = String(admin.name || 'Support');
+  const directContacts = [...admins, ...peers];
+  const seenPeerIds = new Set<string>();
+
+  for (const contact of directContacts) {
+    const peerId = String(contact.id);
+    if (seenPeerIds.has(peerId)) {
+      continue;
+    }
+    seenPeerIds.add(peerId);
+
+    const contactRecord = contact as Record<string, unknown>;
+    const lastMessageAt = lastMessageIso(contactRecord);
+    const contactName = String(contact.name || contact.email || 'Chat');
     items.push({
-      id: `direct-${String(admin.id)}`,
+      id: `direct-${peerId}`,
       type: 'direct',
-      peerUserId: String(admin.id),
-      name: adminName,
-      preview: buildPreviewLabel(adminRecord, 'direct', currentUserId),
+      peerUserId: peerId,
+      name: contactName,
+      preview: buildPreviewLabel(contactRecord, 'direct', currentUserId),
       time: formatChatListTime(lastMessageAt),
       lastMessageAt,
-      unreadCount: Number(admin.unread_count ?? 0) || 0,
-      avatarUri: contactAvatarUri(adminRecord) ?? placeholderAvatarUri(adminName),
+      unreadCount: Number(contact.unread_count ?? 0) || 0,
+      avatarUri: contactAvatarUri(contactRecord) ?? placeholderAvatarUri(contactName),
     });
   }
 

@@ -87,6 +87,7 @@ export const env = {
     groups: 'mobile/messages/groups',
     createGroup: 'mobile/messages/groups',
     acceptInvitation: (token: string) => `mobile/messages/invitations/${token}/accept`,
+    startPeerConversation: 'mobile/messages/peers/start',
     directMessages: (userId: number | string) => `mobile/messages/direct/${userId}`,
     sendDirect: 'mobile/messages/direct',
     markDirectRead: (userId: number | string) => `mobile/messages/direct/${userId}/read`,
@@ -104,6 +105,26 @@ export const env = {
     markReadOnOpen: 'mobile/notifications/mark-read-on-open',
   },
 
+  mobileVendors: {
+    list: 'mobile/client-vendors',
+    detail: (id: number | string) => `mobile/client-vendors/${id}`,
+  },
+
+  mobileVendorRequests: {
+    list: 'mobile/vendor-requests',
+    detail: (id: number | string) => `mobile/vendor-requests/${id}`,
+    jobOptions: 'mobile/vendor-requests/job-options',
+    cancel: (id: number | string) => `mobile/vendor-requests/${id}/cancel`,
+    resend: (id: number | string) => `mobile/vendor-requests/${id}/resend`,
+    messages: (id: number | string) => `mobile/vendor-requests/${id}/messages`,
+    permissions: (id: number | string) => `mobile/vendor-requests/${id}/permissions`,
+  },
+
+  mobileDevices: {
+    register: 'mobile/devices/register',
+    unregister: 'mobile/devices/unregister',
+  },
+
   requestTimeoutMs: 15000,
 
   /** Same key as web `MIX_GOOGLE_MAPS_API_KEY` (Static Maps / satellite). */
@@ -116,5 +137,5 @@ export const env = {
    * When true, customer + portal modules return in-app mock data (no HTTP).
    * Set false when APIs should hit the server (requires valid auth).
    */
-  useMockData: true,
+  useMockData: false,
 };

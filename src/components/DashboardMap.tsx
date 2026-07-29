@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -17,12 +17,19 @@ import type { DashboardMapCenter } from '../types/dashboard';
 import { buildDashboardMapHtml } from '../utils/dashboardMapHtml';
 import { getGoogleMapsApiKey } from '../utils/projectMapImage';
 import { loadDashboardHailOverlay, type DashboardHailOverlay } from '../utils/nexradMapGeoJson';
+import { ImpactReportSheet } from './ImpactReportSheet';
 
 type Props = {
   map?: DashboardMapCenter | null;
   preferredHailDate?: string | null;
+  /** Subscription / plan name for bronze|silver|gold|platinum shield marker. */
+  planName?: string | null;
   /** Disable parent ScrollView while the user pans/zooms the map. */
   onScrollEnabledChange?: (enabled: boolean) => void;
+};
+
+export type DashboardMapHandle = {
+  openImpact: () => void;
 };
 
 const DEFAULT_CENTER = { lat: 38.9072, lng: -77.0369 };
@@ -88,7 +95,10 @@ function MapWebView({ html, webViewKey, style }: MapWebViewProps): React.JSX.Ele
   );
 }
 
-export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: Props): React.JSX.Element {
+export const DashboardMap = forwardRef<DashboardMapHandle, Props>(function DashboardMap(
+  { map, preferredHailDate, planName, onScrollEnabledChange },
+  ref,
+): React.JSX.Element {
   const apiKey = getGoogleMapsApiKey();
   const coords = resolveMapCoords(map);
   const lat = coords?.lat ?? DEFAULT_CENTER.lat;
@@ -97,6 +107,22 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
   const [hailOverlay, setHailOverlay] = useState<DashboardHailOverlay>(EMPTY_HAIL);
   const [hailLoading, setHailLoading] = useState(false);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [impactOpen, setImpactOpen] = useState(false);
+  const [selectedHailDate, setSelectedHailDate] = useState<string | null>(null);
+
+  const effectiveHailDate = selectedHailDate ?? preferredHailDate ?? null;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openImpact: () => {
+        if (hasCoords) {
+          setImpactOpen(true);
+        }
+      },
+    }),
+    [hasCoords],
+  );
 
   useEffect(() => {
     if (!hasCoords) {
@@ -106,7 +132,7 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
 
     let cancelled = false;
     setHailLoading(true);
-    loadDashboardHailOverlay(lat, lng, preferredHailDate)
+    loadDashboardHailOverlay(lat, lng, effectiveHailDate)
       .then((result) => {
         if (!cancelled) {
           setHailOverlay(result);
@@ -130,7 +156,7 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
     return () => {
       cancelled = true;
     };
-  }, [hasCoords, lat, lng, preferredHailDate]);
+  }, [hasCoords, lat, lng, effectiveHailDate]);
 
   const html = useMemo(() => {
     if (!apiKey) {
@@ -145,8 +171,9 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
       geocodeAddress: !hasCoords && Boolean(map?.address?.trim()),
       hailGeoJson: hailOverlay.geoJson,
       hailStatus: hailOverlay.statusMessage,
+      planName,
     });
-  }, [apiKey, hasCoords, lat, lng, map?.address, hailOverlay.geoJson, hailOverlay.statusMessage]);
+  }, [apiKey, hasCoords, lat, lng, map?.address, hailOverlay.geoJson, hailOverlay.statusMessage, planName]);
 
   const webViewKey = `${hasCoords ? `${lat}-${lng}` : 'geo'}-${hailOverlay.dateKey ?? 'none'}-${hailOverlay.geoJson?.features?.length ?? 0}`;
 
@@ -199,6 +226,17 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
             </View>
           ) : null}
 
+          {!mapUnavailable && hasCoords ? (
+            <Pressable
+              style={({ pressed }) => [styles.impactBtn, pressed && styles.fullscreenBtnPressed]}
+              onPress={() => setImpactOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Show Impact"
+            >
+              <Text style={styles.impactBtnText}>Show Impact</Text>
+            </Pressable>
+          ) : null}
+
           {!mapUnavailable ? (
             <Pressable
               style={({ pressed }) => [styles.fullscreenBtn, pressed && styles.fullscreenBtnPressed]}
@@ -219,14 +257,26 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
         <SafeAreaView style={styles.fullscreenSafe} edges={['top', 'bottom']}>
           <View style={styles.fullscreenHeader}>
             <Text style={styles.fullscreenTitle}>Interactive Map</Text>
-            <Pressable
-              style={({ pressed }) => [styles.fullscreenCloseBtn, pressed && styles.fullscreenBtnPressed]}
-              onPress={closeFullscreen}
-              accessibilityRole="button"
-              accessibilityLabel="Close full screen map"
-            >
-              <Text style={styles.fullscreenCloseText}>✕</Text>
-            </Pressable>
+            <View style={styles.fullscreenHeaderActions}>
+              {hasCoords ? (
+                <Pressable
+                  style={({ pressed }) => [styles.impactBtnHeader, pressed && styles.fullscreenBtnPressed]}
+                  onPress={() => setImpactOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Show Impact"
+                >
+                  <Text style={styles.impactBtnText}>Show Impact</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                style={({ pressed }) => [styles.fullscreenCloseBtn, pressed && styles.fullscreenBtnPressed]}
+                onPress={closeFullscreen}
+                accessibilityRole="button"
+                accessibilityLabel="Close full screen map"
+              >
+                <Text style={styles.fullscreenCloseText}>✕</Text>
+              </Pressable>
+            </View>
           </View>
           <View
             style={styles.fullscreenMapWrap}
@@ -240,9 +290,23 @@ export function DashboardMap({ map, preferredHailDate, onScrollEnabledChange }: 
           </View>
         </SafeAreaView>
       </Modal>
+
+      {hasCoords ? (
+        <ImpactReportSheet
+          visible={impactOpen}
+          lat={lat}
+          lng={lng}
+          address={map?.address}
+          onClose={() => setImpactOpen(false)}
+          onShowOnMap={(dateKey) => {
+            setSelectedHailDate(dateKey);
+            setFullscreenOpen(true);
+          }}
+        />
+      ) : null}
     </>
   );
-}
+});
 
 const styles = StyleSheet.create({
   clip: {
@@ -283,6 +347,37 @@ const styles = StyleSheet.create({
     color: '#344054',
     fontSize: 11,
     fontWeight: '600',
+  },
+  impactBtn: {
+    position: 'absolute',
+    left: 10,
+    top: 10,
+    zIndex: 5,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.14,
+        shadowRadius: 4,
+      },
+      android: { elevation: 3 },
+    }),
+  },
+  impactBtnHeader: {
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+  },
+  impactBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   fullscreenBtn: {
     position: 'absolute',
@@ -385,6 +480,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E3EAF6',
     backgroundColor: '#FFFFFF',
+  },
+  fullscreenHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   fullscreenTitle: {
     flex: 1,

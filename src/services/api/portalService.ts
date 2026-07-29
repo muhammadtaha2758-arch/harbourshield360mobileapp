@@ -3,6 +3,7 @@ import { env } from '../../config/env';
 import {
   ChatGroup,
   ChatUsersPayload,
+  ChatContact,
   CustomerAgreement,
   CustomerDocument,
   CustomerJob,
@@ -160,6 +161,7 @@ const mockChatUsers = (): ChatUsersPayload => ({
       last_message_is_mine: false,
     },
   ],
+  peers: [],
   client: { id: 1, name: 'You (mock)', email: 'client@example.com' },
 });
 
@@ -900,10 +902,66 @@ export const portalService = {
       return mockChatUsers();
     }
     try {
-      const response = await httpClient.get<ChatUsersResponse>(env.mobileMessages.users);
-      return response.data;
+      const response = await httpClient.get<ChatUsersResponse & { peers?: ChatContact[] }>(
+        env.mobileMessages.users,
+      );
+      return {
+        ...response.data,
+        peers: Array.isArray(response.data.peers) ? response.data.peers : [],
+      };
     } catch (error) {
       throw getError(error, 'Unable to load messages contacts.');
+    }
+  },
+
+  async startPeerConversation(email: string): Promise<{
+    status: 'ready' | 'invited';
+    peer?: ChatContact;
+    message?: string;
+    emailSent?: boolean;
+  }> {
+    if (env.useMockAuth) {
+      return {
+        status: 'ready',
+        peer: {
+          id: Date.now(),
+          name: email.split('@')[0] || 'Peer',
+          email,
+          user_type: 'customer',
+        },
+        message: 'Conversation ready (mock).',
+      };
+    }
+    try {
+      const response = await httpClient.post<{
+        success?: boolean;
+        status?: 'ready' | 'invited';
+        peer?: ChatContact;
+        message?: string;
+        error?: string;
+        email_sent?: boolean;
+      }>(env.mobileMessages.startPeerConversation, { email: email.trim().toLowerCase() });
+
+      if (response.data.success !== true) {
+        throw new Error(response.data.error || 'Unable to start conversation.');
+      }
+
+      return {
+        status: response.data.status === 'invited' ? 'invited' : 'ready',
+        peer: response.data.peer,
+        message: response.data.message,
+        emailSent: response.data.email_sent,
+      };
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      const axiosError = error as AxiosError<{ error?: string; message?: string }>;
+      throw new Error(
+        axiosError.response?.data?.error ||
+          axiosError.response?.data?.message ||
+          'Unable to start conversation.',
+      );
     }
   },
 

@@ -1,4 +1,5 @@
 import { env } from '../config/env';
+import { resolveHarbourShieldMarkerIcon } from './harbourShieldMapMarkers';
 
 export type DashboardMapHtmlConfig = {
   apiKey: string;
@@ -10,6 +11,8 @@ export type DashboardMapHtmlConfig = {
   /** Pre-loaded hail polygons from RN (avoids WebView fetch / CORS). */
   hailGeoJson?: { type: string; features: unknown[] } | null;
   hailStatus?: string;
+  /** Subscription / plan name for bronze|silver|gold|platinum shield. */
+  planName?: string | null;
 };
 
 /**
@@ -23,6 +26,7 @@ export function buildDashboardMapHtml(config: DashboardMapHtmlConfig): string {
   const zoom = config.zoom ?? 17;
   const apiKey = config.apiKey.replace(/'/g, "\\'");
   const address = (config.address ?? '').replace(/'/g, "\\'");
+  const markerIconUrl = resolveHarbourShieldMarkerIcon(config.planName);
 
   const payload = JSON.stringify({
     apiBase,
@@ -33,6 +37,7 @@ export function buildDashboardMapHtml(config: DashboardMapHtmlConfig): string {
     geocodeAddress: config.geocodeAddress === true,
     hailGeoJson: config.hailGeoJson ?? null,
     hailStatus: config.hailStatus ?? '',
+    markerIconUrl,
   });
 
   return `<!DOCTYPE html>
@@ -264,6 +269,13 @@ export function buildDashboardMapHtml(config: DashboardMapHtmlConfig): string {
         map,
         position: { lat: CFG.lat, lng: CFG.lng },
         title: CFG.address || 'Property',
+        icon: CFG.markerIconUrl
+          ? {
+              url: CFG.markerIconUrl,
+              scaledSize: new google.maps.Size(36, 48),
+              anchor: new google.maps.Point(18, 48),
+            }
+          : undefined,
       });
 
       const chip = document.getElementById('address-chip');

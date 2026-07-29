@@ -16,6 +16,7 @@ export type AppTabParamList = {
   DocumentsTab: undefined;
   ServiceRequestsTab: undefined;
   FinancingTab: undefined;
+  VendorsTab: undefined;
 };
 
 export type AgreementsStackParamList = {

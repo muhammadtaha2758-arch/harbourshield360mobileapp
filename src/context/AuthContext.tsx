@@ -6,6 +6,7 @@ import { loadMobileConfig } from '../services/api/configService';
 import { customerService } from '../services/api/customerService';
 import { env } from '../config/env';
 import { setAuthToken } from '../services/api/httpClient';
+import { unregisterDeviceTokenFromBackend } from '../services/api/pushService';
 import { sessionStorage } from '../services/storage/sessionStorage';
 import { AuthState, UserProfile } from '../types/auth';
 
@@ -140,6 +141,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }, []);
 
   const clearLocalSession = useCallback(async (): Promise<void> => {
+    const fcmToken = await sessionStorage.getFcmToken();
+    await unregisterDeviceTokenFromBackend(fcmToken);
+    await sessionStorage.clearFcmToken();
     await sessionStorage.clearToken();
     setAuthToken(null);
     setState({

@@ -8,6 +8,7 @@ import { ToastProvider } from './src/context/ToastContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { navigationRef } from './src/navigation/navigationRef';
 import { MeetingRoomInvitationHandler } from './src/components/MeetingRoomInvitationHandler';
+import { PushNotificationBootstrap } from './src/components/PushNotificationBootstrap';
 import { colors } from './src/theme/colors';
 
 function App(): React.JSX.Element {
@@ -19,6 +20,7 @@ function App(): React.JSX.Element {
             <NavigationContainer ref={navigationRef}>
               <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
               <MeetingRoomInvitationHandler />
+              <PushNotificationBootstrap />
               <RootNavigator />
             </NavigationContainer>
           </AuthProvider>

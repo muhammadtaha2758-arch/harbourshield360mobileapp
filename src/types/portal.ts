@@ -147,6 +147,8 @@ export interface ChatContact {
 
 export interface ChatUsersPayload {
   admins?: ChatContact[];
+  /** Customer peers with existing 1:1 threads (no Admin). */
+  peers?: ChatContact[];
   client?: { id?: number | string; name?: string; email?: string; [key: string]: unknown } | null;
   users?: ChatContact[];
   /** @deprecated Web API uses `admins` array */

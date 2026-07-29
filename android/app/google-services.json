@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "778229111283",
+    "project_id": "harbourshield360",
+    "storage_bucket": "harbourshield360.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:778229111283:android:79d003f75393793a06da86",
+        "android_client_info": {
+          "package_name": "com.harbourshield360mobileapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD4I-hkH4g5FlRkAuO83Qt1NjmbEMYbUTY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

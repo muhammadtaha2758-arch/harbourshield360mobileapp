@@ -30,12 +30,15 @@ export type NotificationBellPressableProps = {
   style?: PressableProps['style'];
   iconWidth?: number;
   iconHeight?: number;
+  /** Optional custom icon (e.g. white outline on blue headers). */
+  icon?: React.ReactNode;
 };
 
 export function NotificationBellPressable({
   style,
   iconWidth = 24,
   iconHeight = 25,
+  icon,
 }: NotificationBellPressableProps): React.JSX.Element {
   const navigation = useNavigation();
   const [open, setOpen] = useState(false);
@@ -157,7 +160,9 @@ export function NotificationBellPressable({
         }
       >
         <View style={styles.iconWrap}>
-          <NotificationIcon width={iconWidth} height={iconHeight} accessibilityElementsHidden />
+          {icon ?? (
+            <NotificationIcon width={iconWidth} height={iconHeight} accessibilityElementsHidden />
+          )}
           {unreadCount > 0 ? (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{badgeLabel}</Text>

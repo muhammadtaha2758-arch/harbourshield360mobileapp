@@ -30,6 +30,7 @@ import { InvoicesScreen } from '../screens/work/InvoicesScreen';
 import { PhotosMediaScreen } from '../screens/work/PhotosMediaScreen';
 import { ServiceRequestsScreen } from '../screens/work/ServiceRequestsScreen';
 import { FinancingScreen } from '../screens/work/FinancingScreen';
+import { VendorsScreen } from '../screens/work/VendorsScreen';
 import { AgreementsNavigator } from './AgreementsNavigator';
 import { AppDrawerContent } from './AppDrawerContent';
 import { colors } from '../theme/colors';
@@ -58,6 +59,7 @@ const TAB_BAR_HIDDEN_ROUTES: ReadonlySet<keyof AppTabParamList> = new Set([
   'DocumentsTab',
   'ServiceRequestsTab',
   'FinancingTab',
+  'VendorsTab',
 ]);
 
 function renderAppDrawerContent(props: DrawerContentComponentProps): React.JSX.Element {
@@ -291,6 +293,7 @@ function AppTabs(): React.JSX.Element {
       <Tabs.Screen name="DocumentsTab" component={DocumentsScreen} options={{ title: 'Documents' }} />
       <Tabs.Screen name="ServiceRequestsTab" component={ServiceRequestsScreen} options={{ title: 'Services' }} />
       <Tabs.Screen name="FinancingTab" component={FinancingScreen} options={{ title: 'Financing' }} />
+      <Tabs.Screen name="VendorsTab" component={VendorsScreen} options={{ title: 'Vendors' }} />
     </Tabs.Navigator>
   );
 }
