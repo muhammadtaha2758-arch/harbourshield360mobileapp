@@ -1,6 +1,6 @@
 import { toastAlert } from '../../utils/toastAlert';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { DrawerActions, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
@@ -14,6 +14,8 @@ import {
   type ProjectStepId,
   type TimelineStepItem,
 } from '../../utils/jobDetailMapping';
+import { openChatAttachment } from '../../utils/chatAttachment';
+import { downloadRemoteFile } from '../../utils/documentDownload';
 import { colors } from '../../theme/colors';
 import { portalScreenLayout } from '../../theme/portalScreenLayout';
 import { PortalSearchBar } from '../../components/PortalSearchBar';
@@ -141,21 +143,29 @@ export function ProjectDetailScreen(): React.JSX.Element {
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [expandedStepId, setExpandedStepId] = useState<ProjectStepId | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [detail, setDetail] = useState<JobDetailApiResponse | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
+  const [openingItemId, setOpeningItemId] = useState<string | null>(null);
+  const [downloadingItemId, setDownloadingItemId] = useState<string | null>(null);
 
   const projectId = route.params?.projectId;
 
-  const loadDetail = useCallback(async () => {
+  const loadDetail = useCallback(async (isRefresh = false) => {
     if (!projectId) {
       setLoading(false);
+      setRefreshing(false);
       setDetail(null);
       return;
     }
 
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
       const data = await portalService.getJobById(projectId);
       setDetail(data);
     } catch (error) {
@@ -163,9 +173,12 @@ export function ProjectDetailScreen(): React.JSX.Element {
         'Project',
         error instanceof Error ? error.message : 'Failed to load project details.',
       );
-      setDetail(null);
+      if (!isRefresh) {
+        setDetail(null);
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [projectId]);
 
@@ -226,17 +239,60 @@ export function ProjectDetailScreen(): React.JSX.Element {
 
   const openTimelineItem = useCallback(async (item: TimelineStepItem) => {
     if (!item.url) {
+      toastAlert('Open file', 'This file cannot be opened.');
       return;
     }
-    try {
-      const canOpen = await Linking.canOpenURL(item.url);
-      if (canOpen) {
-        await Linking.openURL(item.url);
-      }
-    } catch {
-      toastAlert('Open link', 'Unable to open this item.');
+    if (openingItemId || downloadingItemId) {
+      return;
     }
-  }, []);
+    setOpeningItemId(item.id);
+    try {
+      if (item.openAs === 'file') {
+        await openChatAttachment({
+          url: item.url,
+          fileName: item.fileName || item.title,
+          kind: item.fileKind === 'photo' ? 'photo' : 'document',
+        });
+        return;
+      }
+      await Linking.openURL(item.url);
+    } catch (error) {
+      toastAlert(
+        'Open file',
+        error instanceof Error ? error.message : 'Unable to open this item.',
+      );
+    } finally {
+      setOpeningItemId(null);
+    }
+  }, [downloadingItemId, openingItemId]);
+
+  const downloadTimelineItem = useCallback(async (item: TimelineStepItem) => {
+    if (!item.url || item.openAs !== 'file') {
+      toastAlert('Download', 'This file cannot be downloaded.');
+      return;
+    }
+    if (openingItemId || downloadingItemId) {
+      return;
+    }
+    setDownloadingItemId(item.id);
+    try {
+      await downloadRemoteFile({
+        url: item.url,
+        fileName: item.fileName || item.title,
+        mime: item.mime,
+      });
+      if (Platform.OS === 'android') {
+        toastAlert('Download started', 'Check your Downloads folder or notification shade.');
+      }
+    } catch (error) {
+      toastAlert(
+        'Download failed',
+        error instanceof Error ? error.message : 'Could not download this file.',
+      );
+    } finally {
+      setDownloadingItemId(null);
+    }
+  }, [downloadingItemId, openingItemId]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -279,7 +335,14 @@ export function ProjectDetailScreen(): React.JSX.Element {
         </View>
       </View>
 
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => void loadDetail(true)} tintColor={colors.primary} />
+        }
+      >
         {loading ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={colors.primary} />
@@ -334,13 +397,11 @@ export function ProjectDetailScreen(): React.JSX.Element {
                         >
                           {items.length > 0 ? (
                             <View style={styles.documentsList}>
-                              {items.map((item) => (
-                                <Pressable
-                                  key={item.id}
-                                  style={styles.documentCard}
-                                  onPress={() => void openTimelineItem(item)}
-                                  disabled={!item.url}
-                                >
+                              {items.map((item) => {
+                                const itemBusy = openingItemId === item.id || downloadingItemId === item.id;
+                                const canDownload = Boolean(item.url) && item.openAs === 'file';
+                                return (
+                                <View key={item.id} style={styles.documentCard}>
                                   <Text style={styles.documentName}>{item.title}</Text>
                                   {item.lines.map((line) => (
                                     <Text key={`${item.id}-${line}`} style={styles.documentMeta}>
@@ -348,10 +409,46 @@ export function ProjectDetailScreen(): React.JSX.Element {
                                     </Text>
                                   ))}
                                   {item.url ? (
-                                    <Text style={styles.documentLink}>Tap to open</Text>
+                                    <View style={styles.documentActions}>
+                                      <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Open file"
+                                        onPress={() => void openTimelineItem(item)}
+                                        disabled={itemBusy}
+                                        style={styles.documentActionHit}
+                                      >
+                                        {openingItemId === item.id ? (
+                                          <View style={styles.documentOpeningRow}>
+                                            <ActivityIndicator size="small" color={colors.primary} />
+                                            <Text style={styles.documentLink}>Opening…</Text>
+                                          </View>
+                                        ) : (
+                                          <Text style={styles.documentLink}>Open</Text>
+                                        )}
+                                      </Pressable>
+                                      {canDownload ? (
+                                        <Pressable
+                                          accessibilityRole="button"
+                                          accessibilityLabel="Download file"
+                                          onPress={() => void downloadTimelineItem(item)}
+                                          disabled={itemBusy}
+                                          style={styles.documentActionHit}
+                                        >
+                                          {downloadingItemId === item.id ? (
+                                            <View style={styles.documentOpeningRow}>
+                                              <ActivityIndicator size="small" color={colors.primary} />
+                                              <Text style={styles.documentLink}>Downloading…</Text>
+                                            </View>
+                                          ) : (
+                                            <Text style={styles.documentLink}>Download</Text>
+                                          )}
+                                        </Pressable>
+                                      ) : null}
+                                    </View>
                                   ) : null}
-                                </Pressable>
-                              ))}
+                                </View>
+                                );
+                              })}
                             </View>
                           ) : (
                             <View style={styles.emptyDocumentBox}>
@@ -540,7 +637,23 @@ const styles = StyleSheet.create({
     color: '#1A3FD8',
     fontSize: 11,
     fontWeight: '600',
-    marginTop: 4,
+    marginTop: 0,
+  },
+  documentActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginTop: 6,
+    gap: 16,
+  },
+  documentActionHit: {
+    minHeight: 28,
+    justifyContent: 'center',
+  },
+  documentOpeningRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   emptyDocumentBox: {
     marginTop: 0,

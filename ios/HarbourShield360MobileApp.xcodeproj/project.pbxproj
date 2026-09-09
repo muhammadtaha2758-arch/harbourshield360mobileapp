@@ -269,6 +269,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XUJZH45266;
 				ENABLE_BITCODE = NO;
+				CODE_SIGN_ENTITLEMENTS = HarbourShield360MobileApp/HarbourShield360MobileApp.entitlements;
 				INFOPLIST_FILE = HarbourShield360MobileApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = harborshield360;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
@@ -304,6 +305,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = XUJZH45266;
+				CODE_SIGN_ENTITLEMENTS = HarbourShield360MobileApp/HarbourShield360MobileApp.entitlements;
 				INFOPLIST_FILE = HarbourShield360MobileApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = harborshield360;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";

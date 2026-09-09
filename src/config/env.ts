@@ -76,6 +76,7 @@ export const env = {
   mobileProfile: {
     show: 'mobile/profile',
     update: 'mobile/profile',
+    avatar: 'mobile/profile/avatar',
   },
 
   mobileDashboard: {
@@ -94,6 +95,10 @@ export const env = {
     groupMessages: (groupId: number | string) => `mobile/messages/groups/${groupId}/messages`,
     sendGroup: 'mobile/messages/groups/send',
     markGroupRead: (groupId: number | string) => `mobile/messages/groups/${groupId}/read`,
+    deleteGroup: (groupId: number | string) => `mobile/messages/groups/${groupId}/delete`,
+    wipeGroup: (groupId: number | string) => `mobile/messages/groups/${groupId}/wipe`,
+    leaveGroup: (groupId: number | string) => `mobile/messages/groups/${groupId}/leave`,
+    hideMessage: (messageId: number | string) => `mobile/messages/${messageId}/hide`,
     upload: 'mobile/messages/upload',
   },
 

@@ -27,6 +27,7 @@ import {
 import { PortalSearchBar } from '../../components/PortalSearchBar';
 import { ListFilterSheet } from '../../components/ListFilterSheet';
 import { NotificationBellPressable } from '../../components/NotificationBellPressable';
+import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
 import { SERVICE_REQUEST_STATUS_OPTIONS, STANDARD_SORT_OPTIONS } from '../../constants/listFilterPresets';
 import type { SortOption } from '../../types/listFilters';
 import { DEFAULT_SORT } from '../../types/listFilters';
@@ -318,13 +319,7 @@ export function ServiceRequestsScreen(): React.JSX.Element {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={portalScreenLayout.chrome}>
         <View style={portalScreenLayout.profileRow}>
-          <Pressable style={({ pressed }) => [styles.profilePill, pressed && styles.dim]}>
-            <View style={styles.avatarWrap}>
-              <Text style={styles.avatarGlyph}>◌</Text>
-            </View>
-            <Text style={styles.profileName}>Jane</Text>
-            <Text style={styles.chevron}>▾</Text>
-          </Pressable>
+          <PortalProfileHeaderButton />
           <NotificationBellPressable style={({ pressed }) => [styles.iconTile, pressed && styles.dim]} />
         </View>
 
@@ -649,26 +644,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.background,
   },
-  profilePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    paddingVertical: 6,
-    paddingLeft: 6,
-    paddingRight: 14,
-  },
-  avatarWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 14,
-    backgroundColor: colors.avatarSoftFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarGlyph: { color: colors.primaryDark, fontSize: 14, fontWeight: '600' },
-  profileName: { fontSize: 16, fontWeight: '600', color: '#4A5568', marginLeft: 10 },
-  chevron: { fontSize: 11, color: colors.primary, marginLeft: 6 },
   iconTile: {
     width: 44,
     height: 44,

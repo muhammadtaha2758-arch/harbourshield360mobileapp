@@ -13,14 +13,25 @@ import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { portalService } from '../../services/api/portalService';
+import { sessionStorage } from '../../services/storage/sessionStorage';
 import type { ChatContact, ChatMessageRecord } from '../../types/chat';
 import type { ChatGroup, ChatGroupMember } from '../../types/portal';
 import type { MessagesStackParamList } from '../../navigation/types';
 import { ChatHeaderAvatar } from '../../components/ChatHeaderAvatar';
 import { ChatMessageBubble } from '../../components/ChatMessageBubble';
-import { mapMessagesToBubbles, type ChatBubble } from '../../utils/chatMapping';
+import { mapMessagesToBubbles, parseChatDateTime, type ChatBubble } from '../../utils/chatMapping';
+import { ChatAttachmentSheet, type ChatAttachmentChoice } from '../../components/ChatAttachmentSheet';
+import { ChatMessageActionSheet } from '../../components/ChatMessageActionSheet';
+import { captureImageWithCamera, pickImageFromLibrary } from '../../utils/imageSource';
 import { openChatAttachment, type ChatAttachmentKind } from '../../utils/chatAttachment';
-import { captureImageWithCamera, promptImageSource } from '../../utils/imageSource';
+import { setActiveChat } from '../../services/push/activeChat';
+import { setAppBadgeCount } from '../../services/push/localNotifications';
+import {
+  confirmDeleteMeetingRoom,
+  confirmHideConversation,
+  confirmLeaveMeetingRoom,
+  confirmWipeMeetingRoom,
+} from '../../utils/confirmChatManagement';
 
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const PREVIEW_IMAGE_MAX_H = Math.round(Dimensions.get('window').height * 0.72);
@@ -60,14 +71,11 @@ function contactField(contact: ChatContact | null, key: string): string {
 }
 
 function formatDateDivider(iso?: string): string {
-  if (!iso) {
+  const date = parseChatDateTime(iso);
+  if (!date) {
     return '';
   }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 function buildChatListItems(messages: ChatBubble[]): ChatListItem[] {
@@ -109,10 +117,14 @@ export function ChatScreen(): React.JSX.Element {
   const [groupDetails, setGroupDetails] = useState<ChatGroup | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<{ url: string; fileName: string } | null>(null);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
+  const [managingRoom, setManagingRoom] = useState(false);
+  const [messageActionTarget, setMessageActionTarget] = useState<ChatBubble | null>(null);
+  const [deletingMessage, setDeletingMessage] = useState(false);
   const chatScrollRef = useRef<ScrollView | null>(null);
   const loadInFlightRef = useRef(false);
   const sendingRef = useRef(false);
   const uploadingRef = useRef(false);
+  const hiddenMessageIdsRef = useRef<Set<string>>(new Set());
 
   const chatListItems = useMemo(() => buildChatListItems(messages), [messages]);
 
@@ -158,7 +170,11 @@ export function ChatScreen(): React.JSX.Element {
         records = await portalService.getDirectMessages(peerUserId);
         await portalService.markDirectRead(peerUserId);
       }
-      setMessages(mapMessagesToBubbles(records, currentUserId));
+      const storedHidden = await sessionStorage.getHiddenMessageIds();
+      storedHidden.forEach((id) => hiddenMessageIdsRef.current.add(id));
+      const hidden = hiddenMessageIdsRef.current;
+      const visibleRecords = records.filter((record) => !hidden.has(String(record.id)));
+      setMessages(mapMessagesToBubbles(visibleRecords, currentUserId));
     } catch (error) {
       if (!silent) {
         toastAlert('Chat', error instanceof Error ? error.message : 'Failed to load messages.');
@@ -173,7 +189,19 @@ export function ChatScreen(): React.JSX.Element {
 
   useFocusEffect(
     useCallback(() => {
+      if (chatType === 'group' && groupId) {
+        setActiveChat({ type: 'group', groupId: String(groupId) });
+      } else if (chatType === 'direct' && peerUserId) {
+        setActiveChat({ type: 'direct', peerUserId: String(peerUserId) });
+      } else {
+        setActiveChat(null);
+      }
+
       void loadMessages();
+      void portalService
+        .getNotificationsUnreadCount()
+        .then((count) => setAppBadgeCount(count))
+        .catch(() => undefined);
 
       const intervalId = setInterval(() => {
         void loadMessages({ silent: true });
@@ -186,10 +214,11 @@ export function ChatScreen(): React.JSX.Element {
       });
 
       return () => {
+        setActiveChat(null);
         clearInterval(intervalId);
         appStateSub.remove();
       };
-    }, [loadMessages]),
+    }, [chatType, groupId, loadMessages, peerUserId]),
   );
 
   const onSendMessage = async (): Promise<void> => {
@@ -211,7 +240,7 @@ export function ChatScreen(): React.JSX.Element {
       kind: 'text',
       text,
       side: 'right',
-      timeLabel: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+      timeLabel: new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
       createdAt: nowIso,
       isRead: false,
     };
@@ -313,27 +342,20 @@ export function ChatScreen(): React.JSX.Element {
   );
 
   const onSelectAttachment = useCallback(
-    async (attachmentType: ChatAttachmentKind): Promise<void> => {
-      setShowAttachmentMenu(false);
-
+    async (choice: ChatAttachmentChoice): Promise<void> => {
       try {
-        if (attachmentType === 'photo') {
-          const source = await promptImageSource();
-          if (!source) {
+        if (choice === 'camera' || choice === 'library') {
+          const selected =
+            choice === 'camera' ? await captureImageWithCamera() : await pickImageFromLibrary();
+          if (!selected) {
             return;
           }
-          if (source === 'camera') {
-            const captured = await captureImageWithCamera();
-            if (!captured) {
-              return;
-            }
-            await uploadAttachment(captured.uri, captured.name, captured.type, 'photo');
-            return;
-          }
+          await uploadAttachment(selected.uri, selected.name, selected.type, 'photo');
+          return;
         }
 
         const [file] = await pick({
-          type: attachmentType === 'photo' ? [types.images] : [types.pdf, types.doc, types.docx, types.plainText],
+          type: [types.pdf, types.doc, types.docx, types.plainText],
           allowMultiSelection: false,
           ...(Platform.OS === 'android' ? { allowVirtualFiles: true } : {}),
         });
@@ -349,7 +371,7 @@ export function ChatScreen(): React.JSX.Element {
         }
 
         const resolved = await resolvePickedFileUri(file);
-        await uploadAttachment(resolved.uri, resolved.name, file.type ?? null, attachmentType);
+        await uploadAttachment(resolved.uri, resolved.name, file.type ?? null, 'document');
       } catch (error) {
         if (isErrorWithCode(error) && error.code === errorCodes.OPERATION_CANCELED) {
           return;
@@ -415,8 +437,8 @@ export function ChatScreen(): React.JSX.Element {
         setGroupDetails(found ?? { id: groupId, name: chatName, title: chatName });
       } else if (peerUserId) {
         const payload = await portalService.getChatUsers();
-        const admins = payload.admins ?? [];
-        const found = admins.find((a) => String(a.id) === String(peerUserId));
+        const contacts = [...(payload.admins ?? []), ...(payload.peers ?? [])];
+        const found = contacts.find((a) => String(a.id) === String(peerUserId));
         setDirectContact(found ?? { id: peerUserId, name: chatName });
       }
     } catch (error) {
@@ -426,6 +448,138 @@ export function ChatScreen(): React.JSX.Element {
       setInfoLoading(false);
     }
   }, [chatName, chatType, groupId, peerUserId]);
+
+  const isRoomCreator = useMemo(() => {
+    if (!groupDetails?.created_by || !currentUserId) {
+      return false;
+    }
+    return String(groupDetails.created_by) === String(currentUserId);
+  }, [currentUserId, groupDetails?.created_by]);
+
+  const hideDirectChat = useCallback(() => {
+    const chatId = route.params?.chatId || (peerUserId ? `direct-${peerUserId}` : groupId ? `group-${groupId}` : '');
+    if (!chatId) {
+      return;
+    }
+    confirmHideConversation({
+      onConfirm: () => {
+        void (async () => {
+          try {
+            await sessionStorage.hideConversation(chatId);
+            setInfoOpen(false);
+            navigation.goBack();
+            toastAlert('Chat', 'Removed from your Messages list.');
+          } catch (error) {
+            toastAlert('Chat', error instanceof Error ? error.message : 'Unable to hide conversation.');
+          }
+        })();
+      },
+    });
+  }, [groupId, navigation, peerUserId, route.params?.chatId]);
+
+  const deleteMessageForMe = useCallback(async (): Promise<void> => {
+    const target = messageActionTarget;
+    if (!target || deletingMessage) {
+      return;
+    }
+    const messageId = String(target.id);
+    if (messageId.startsWith('temp-')) {
+      setMessages((prev) => prev.filter((m) => String(m.id) !== messageId));
+      setMessageActionTarget(null);
+      return;
+    }
+    setDeletingMessage(true);
+    hiddenMessageIdsRef.current.add(messageId);
+    setMessages((prev) => prev.filter((m) => String(m.id) !== messageId));
+    setMessageActionTarget(null);
+    try {
+      await sessionStorage.hideChatMessage(messageId);
+      await portalService.hideMessageForMe(messageId);
+    } catch {
+      // Keep it removed on this device even if the server hide is not live yet.
+    } finally {
+      setDeletingMessage(false);
+    }
+  }, [deletingMessage, messageActionTarget]);
+
+  const deleteMeetingRoom = useCallback(() => {
+    if (!groupId || managingRoom) {
+      return;
+    }
+    confirmDeleteMeetingRoom(chatName, {
+      onConfirm: () => {
+        void (async () => {
+          setManagingRoom(true);
+          try {
+            const message = await portalService.deleteChatGroup(groupId);
+            const chatId = route.params?.chatId || `group-${groupId}`;
+            await sessionStorage.hideConversation(chatId);
+            setInfoOpen(false);
+            toastAlert('Chat', message);
+            navigation.goBack();
+          } catch (error) {
+            const chatId = route.params?.chatId || `group-${groupId}`;
+            await sessionStorage.hideConversation(chatId);
+            setInfoOpen(false);
+            toastAlert(
+              'Chat',
+              'Removed from your Messages list. Only the room creator can close it for everyone.',
+            );
+            navigation.goBack();
+          } finally {
+            setManagingRoom(false);
+          }
+        })();
+      },
+    });
+  }, [chatName, groupId, managingRoom, navigation, route.params?.chatId]);
+
+  const wipeMeetingRoom = useCallback(() => {
+    if (!groupId || managingRoom) {
+      return;
+    }
+    confirmWipeMeetingRoom(chatName, {
+      onConfirm: () => {
+        void (async () => {
+          setManagingRoom(true);
+          try {
+            const message = await portalService.wipeChatGroup(groupId);
+            toastAlert('Chat', message);
+            setMessages([]);
+            setInfoOpen(false);
+            void loadMessages({ silent: true });
+          } catch (error) {
+            toastAlert('Chat', error instanceof Error ? error.message : 'Unable to wipe meeting room.');
+          } finally {
+            setManagingRoom(false);
+          }
+        })();
+      },
+    });
+  }, [chatName, groupId, loadMessages, managingRoom]);
+
+  const leaveMeetingRoom = useCallback(() => {
+    if (!groupId || managingRoom) {
+      return;
+    }
+    confirmLeaveMeetingRoom(chatName, {
+      onConfirm: () => {
+        void (async () => {
+          setManagingRoom(true);
+          try {
+            const message = await portalService.leaveChatGroup(groupId);
+            setInfoOpen(false);
+            toastAlert('Chat', message);
+            navigation.goBack();
+          } catch (error) {
+            toastAlert('Chat', error instanceof Error ? error.message : 'Unable to leave meeting room.');
+          } finally {
+            setManagingRoom(false);
+          }
+        })();
+      },
+    });
+  }, [chatName, groupId, managingRoom, navigation]);
 
   const groupMemberCount = useMemo(() => {
     if (!groupDetails) {
@@ -523,6 +677,7 @@ export function ChatScreen(): React.JSX.Element {
                   onPressAttachment={(bubble) => {
                     onOpenAttachment(bubble).catch(() => undefined);
                   }}
+                  onLongPress={(bubble) => setMessageActionTarget(bubble)}
                   openingAttachment={openingAttachmentId === item.msg.id}
                 />
               ),
@@ -530,16 +685,7 @@ export function ChatScreen(): React.JSX.Element {
           </ScrollView>
         )}
 
-        {showAttachmentMenu ? (
-          <Pressable
-            style={styles.attachmentMenuBackdrop}
-            onPress={closeAttachmentMenu}
-            accessibilityRole="button"
-            accessibilityLabel="Dismiss attachment menu"
-          />
-        ) : null}
-
-        <View style={[styles.footerComposer, { paddingBottom: Math.max(insets.bottom, 10) }, showAttachmentMenu && styles.footerComposerRaised]}>
+        <View style={[styles.footerComposer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
           <View style={styles.attachWrap}>
             <Pressable
               style={({ pressed }) => [
@@ -551,7 +697,7 @@ export function ChatScreen(): React.JSX.Element {
                 if (composerBusy) {
                   return;
                 }
-                setShowAttachmentMenu((prev) => !prev);
+                setShowAttachmentMenu(true);
               }}
               disabled={composerBusy}
               accessibilityRole="button"
@@ -571,29 +717,6 @@ export function ChatScreen(): React.JSX.Element {
                 </Svg>
               )}
             </Pressable>
-
-            {showAttachmentMenu ? (
-              <View style={styles.attachmentMenu}>
-                <Pressable
-                  style={({ pressed }) => [styles.attachmentOption, pressed && styles.pressed]}
-                  onPress={() => {
-                    onSelectAttachment('photo').catch(() => undefined);
-                  }}
-                >
-                  <Text style={styles.attachmentOptionIcon}>🖼</Text>
-                  <Text style={styles.attachmentOptionLabel}>Photo</Text>
-                </Pressable>
-                <Pressable
-                  style={({ pressed }) => [styles.attachmentOption, pressed && styles.pressed]}
-                  onPress={() => {
-                    onSelectAttachment('document').catch(() => undefined);
-                  }}
-                >
-                  <Text style={styles.attachmentOptionIcon}>📄</Text>
-                  <Text style={styles.attachmentOptionLabel}>Document</Text>
-                </Pressable>
-              </View>
-            ) : null}
           </View>
 
           <TextInput
@@ -645,6 +768,28 @@ export function ChatScreen(): React.JSX.Element {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <ChatAttachmentSheet
+        visible={showAttachmentMenu}
+        onClose={closeAttachmentMenu}
+        onSelect={(choice) => {
+          onSelectAttachment(choice).catch(() => undefined);
+        }}
+      />
+
+      <ChatMessageActionSheet
+        visible={messageActionTarget != null}
+        message={messageActionTarget}
+        busy={deletingMessage}
+        onClose={() => {
+          if (!deletingMessage) {
+            setMessageActionTarget(null);
+          }
+        }}
+        onDeleteForMe={() => {
+          void deleteMessageForMe();
+        }}
+      />
 
       <Modal visible={infoOpen} transparent animationType="slide" onRequestClose={closeInfo}>
         <View style={styles.infoModalBackdrop}>
@@ -704,6 +849,67 @@ export function ChatScreen(): React.JSX.Element {
                     );
                   })
                 )}
+
+                {!groupIsDeleted ? (
+                  <View style={styles.infoActions}>
+                    <Pressable
+                      style={({ pressed }) => [styles.infoActionBtn, pressed && styles.pressed]}
+                      onPress={hideDirectChat}
+                      accessibilityRole="button"
+                      accessibilityLabel="Hide meeting room from my list"
+                    >
+                      <Text style={styles.infoActionBtnText}>Hide from my list</Text>
+                    </Pressable>
+                    {isRoomCreator ? (
+                      <>
+                        <Pressable
+                          style={({ pressed }) => [styles.infoActionBtn, pressed && styles.pressed]}
+                          onPress={wipeMeetingRoom}
+                          disabled={managingRoom}
+                          accessibilityRole="button"
+                          accessibilityLabel="Wipe meeting room messages"
+                        >
+                          <Text style={styles.infoActionBtnText}>Wipe messages</Text>
+                        </Pressable>
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.infoActionBtn,
+                            styles.infoActionBtnDanger,
+                            pressed && styles.pressed,
+                          ]}
+                          onPress={deleteMeetingRoom}
+                          disabled={managingRoom}
+                          accessibilityRole="button"
+                          accessibilityLabel="Delete meeting room"
+                        >
+                          {managingRoom ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Text style={styles.infoActionBtnTextDanger}>Delete meeting room</Text>
+                          )}
+                        </Pressable>
+                      </>
+                    ) : (
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.infoActionBtn,
+                          styles.infoActionBtnDanger,
+                          pressed && styles.pressed,
+                        ]}
+                        onPress={leaveMeetingRoom}
+                        disabled={managingRoom}
+                        accessibilityRole="button"
+                        accessibilityLabel="Leave meeting room"
+                      >
+                        {managingRoom ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <Text style={styles.infoActionBtnTextDanger}>Leave meeting room</Text>
+                        )}
+                      </Pressable>
+                    )}
+                  </View>
+                ) : null}
               </ScrollView>
             ) : directContact ? (
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.infoModalBody}>
@@ -730,6 +936,21 @@ export function ChatScreen(): React.JSX.Element {
                   <Text style={styles.infoDetailValue}>
                     {contactField(directContact, 'phone') || 'Phone not available'}
                   </Text>
+                </View>
+
+                <View style={styles.infoActions}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.infoActionBtn,
+                      styles.infoActionBtnDanger,
+                      pressed && styles.pressed,
+                    ]}
+                    onPress={hideDirectChat}
+                    accessibilityRole="button"
+                    accessibilityLabel="Hide conversation"
+                  >
+                    <Text style={styles.infoActionBtnTextDanger}>Hide conversation</Text>
+                  </Pressable>
                 </View>
               </ScrollView>
             ) : (
@@ -791,10 +1012,6 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
     position: 'relative',
-  },
-  attachmentMenuBackdrop: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -904,9 +1121,6 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: '#E5E7EB',
   },
-  footerComposerRaised: {
-    zIndex: 2,
-  },
   attachBtn: {
     width: 40,
     height: 40,
@@ -917,38 +1131,6 @@ const styles = StyleSheet.create({
   },
   attachWrap: {
     position: 'relative',
-    zIndex: 2,
-  },
-  attachmentMenu: {
-    position: 'absolute',
-    left: 0,
-    bottom: 48,
-    minWidth: 148,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    paddingVertical: 6,
-    shadowColor: '#000000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
-  attachmentOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  attachmentOptionIcon: {
-    fontSize: 16,
-  },
-  attachmentOptionLabel: {
-    color: '#111827',
-    fontSize: 14,
-    fontWeight: '500',
   },
   footerInput: {
     flex: 1,
@@ -1087,6 +1269,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#92400E',
     lineHeight: 18,
+  },
+  infoActions: {
+    marginTop: 20,
+    gap: 10,
+  },
+  infoActionBtn: {
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#EEF4FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  infoActionBtnDanger: {
+    backgroundColor: '#FEE2E2',
+  },
+  infoActionBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  infoActionBtnTextDanger: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#B91C1C',
   },
   infoEmptyText: {
     fontSize: 14,

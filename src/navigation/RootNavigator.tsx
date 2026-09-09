@@ -27,6 +27,7 @@ import { MessagesScreen } from '../screens/work/MessagesScreen';
 import { ChatScreen } from '../screens/work/ChatScreen';
 import { ProjectDetailScreen } from '../screens/work/ProjectDetailScreen';
 import { InvoicesScreen } from '../screens/work/InvoicesScreen';
+import { MyBillsScreen } from '../screens/work/MyBillsScreen';
 import { PhotosMediaScreen } from '../screens/work/PhotosMediaScreen';
 import { ServiceRequestsScreen } from '../screens/work/ServiceRequestsScreen';
 import { FinancingScreen } from '../screens/work/FinancingScreen';
@@ -56,6 +57,7 @@ const NOTCH_RADIUS = 35;
 const TAB_BAR_HIDDEN_ROUTES: ReadonlySet<keyof AppTabParamList> = new Set([
   'PhotosMediaTab',
   'EstimatesInvoicesTab',
+  'MyBillsTab',
   'DocumentsTab',
   'ServiceRequestsTab',
   'FinancingTab',
@@ -290,6 +292,7 @@ function AppTabs(): React.JSX.Element {
       <Tabs.Screen name="ProfileTab" component={ProfileScreen} options={{ title: 'Profile' }} />
       <Tabs.Screen name="PhotosMediaTab" component={PhotosMediaScreen} options={{ title: 'Photos' }} />
       <Tabs.Screen name="EstimatesInvoicesTab" component={InvoicesScreen} options={{ title: 'Invoices' }} />
+      <Tabs.Screen name="MyBillsTab" component={MyBillsScreen} options={{ title: 'My Bills' }} />
       <Tabs.Screen name="DocumentsTab" component={DocumentsScreen} options={{ title: 'Documents' }} />
       <Tabs.Screen name="ServiceRequestsTab" component={ServiceRequestsScreen} options={{ title: 'Services' }} />
       <Tabs.Screen name="FinancingTab" component={FinancingScreen} options={{ title: 'Financing' }} />

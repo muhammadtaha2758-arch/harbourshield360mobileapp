@@ -1,13 +1,6 @@
 import { toastAlert } from '../../utils/toastAlert';
 import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Dimensions, Image, Modal, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import {
-  errorCodes,
-  isErrorWithCode,
-  keepLocalCopy,
-  pick,
-  types,
-} from '@react-native-documents/picker';
 import { DrawerActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { CompositeNavigationProp } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
@@ -32,7 +25,7 @@ import { DEFAULT_SORT } from '../../types/listFilters';
 import { applyListFilters } from '../../utils/listFiltering';
 import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
-import { captureImageWithCamera, promptImageSource } from '../../utils/imageSource';
+import { captureImageWithCamera, pickImageFromLibrary, promptImageSource } from '../../utils/imageSource';
 
 type PhotosMediaScreenNavigation = CompositeNavigationProp<
   BottomTabNavigationProp<AppTabParamList, 'PhotosMediaTab'>,
@@ -275,62 +268,15 @@ export function PhotosMediaScreen(): React.JSX.Element {
         return;
       }
 
-      if (source === 'camera') {
-        const captured = await captureImageWithCamera();
-        if (!captured) {
-          return;
-        }
-        setUploadPhotoUri(captured.uri);
-        setUploadPhotoName(captured.name);
-        setUploadPhotoType(captured.type ?? 'image/jpeg');
+      const selected =
+        source === 'camera' ? await captureImageWithCamera() : await pickImageFromLibrary();
+      if (!selected) {
         return;
       }
-
-      const [file] = await pick({
-        type: [types.images],
-        allowMultiSelection: false,
-        ...(Platform.OS === 'android' ? { allowVirtualFiles: true } : {}),
-      });
-      if (file.error) {
-        toastAlert('Photos & Media', file.error);
-        return;
-      }
-      let uri = file.uri;
-      const baseName = file.name || 'photo';
-
-      if (Platform.OS === 'ios') {
-        const [copy] = await keepLocalCopy({
-          files: [{ uri: file.uri, fileName: baseName }],
-          destination: 'cachesDirectory',
-        });
-        if (copy.status === 'success') {
-          uri = copy.localUri;
-        }
-      } else if (file.isVirtual && file.convertibleToMimeTypes?.length) {
-        const mime = file.convertibleToMimeTypes[0].mimeType;
-        const [copy] = await keepLocalCopy({
-          files: [{ uri: file.uri, fileName: baseName, convertVirtualFileToType: mime }],
-          destination: 'cachesDirectory',
-        });
-        if (copy.status === 'success') {
-          uri = copy.localUri;
-        } else {
-          toastAlert('Photos & Media', copy.copyError || 'Could not read the selected photo.');
-          return;
-        }
-      }
-
-      if (!uri) {
-        toastAlert('Photos & Media', 'Could not read the selected photo.');
-        return;
-      }
-      setUploadPhotoUri(uri);
-      setUploadPhotoName(baseName);
-      setUploadPhotoType(file.type ?? 'image/jpeg');
+      setUploadPhotoUri(selected.uri);
+      setUploadPhotoName(selected.name);
+      setUploadPhotoType(selected.type ?? 'image/jpeg');
     } catch (e) {
-      if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) {
-        return;
-      }
       toastAlert('Photos & Media', e instanceof Error ? e.message : 'Could not pick a photo.');
     }
   }, []);

@@ -25,6 +25,7 @@ import { portalService } from '../../services/api/portalService';
 import { useAuth } from '../../context/AuthContext';
 import { navigateToProfileTab } from '../../navigation/navigateToProfileTab';
 import { getProfileHeaderDisplayName } from '../../components/PortalProfileHeaderButton';
+import { UserAvatar } from '../../components/UserAvatar';
 import { colors } from '../../theme/colors';
 import { DashboardMap, type DashboardMapHandle } from '../../components/DashboardMap';
 import type { DashboardHailSlide, DashboardMapCenter } from '../../types/dashboard';
@@ -81,15 +82,6 @@ const DEFAULT_PROMO_SLIDES: PromoSlide[] = [
 
 function formatStat(n: number): string {
   return String(n).padStart(2, '0');
-}
-
-function PersonOutlineGlyph(): React.JSX.Element {
-  return (
-    <View style={styles.personGlyph}>
-      <View style={styles.personHeadRing} />
-      <View style={styles.personShoulders} />
-    </View>
-  );
 }
 
 function HamburgerGlyph(): React.JSX.Element {
@@ -501,9 +493,13 @@ export function DashboardScreen(): React.JSX.Element {
             onPress={openProfile}
             style={({ pressed }) => [styles.userBlock, pressed && styles.headerPressableDim]}
           >
-            <View style={styles.avatarCircle}>
-              <PersonOutlineGlyph />
-            </View>
+            <UserAvatar
+              avatar={user?.avatar}
+              avatarUrl={user?.avatar_url}
+              size={40}
+              radius={20}
+              fallbackVariant="light"
+            />
             <View style={styles.userTextBlock}>
               <Text style={styles.userName} numberOfLines={1}>
                 {displayName}
@@ -814,37 +810,6 @@ const styles = StyleSheet.create({
   },
   headerPressableDim: {
     opacity: 0.88,
-  },
-  avatarCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.avatarSoftFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  personGlyph: {
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    height: 22,
-    paddingTop: 2,
-  },
-  personHeadRing: {
-    width: 9,
-    height: 9,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: colors.primaryDark,
-  },
-  personShoulders: {
-    marginTop: 1,
-    width: 14,
-    height: 7,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    borderWidth: 1.5,
-    borderTopWidth: 0,
-    borderColor: colors.primaryDark,
   },
   iconTile: {
     width: 44,

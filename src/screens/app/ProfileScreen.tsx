@@ -4,9 +4,6 @@ import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, 
 import {
   errorCodes,
   isErrorWithCode,
-  keepLocalCopy,
-  pick,
-  types,
 } from '@react-native-documents/picker';
 import { DrawerActions, useNavigation } from '@react-navigation/native';
 import type { NavigationProp } from '@react-navigation/native';
@@ -14,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
+import { UserAvatar } from '../../components/UserAvatar';
 import { useAuth } from '../../context/AuthContext';
 import type { AppDrawerParamList } from '../../navigation/types';
 import { portalService } from '../../services/api/portalService';
@@ -27,17 +25,18 @@ import {
   subscriptionPlanLabel,
   type ProfileFormState,
 } from '../../utils/profileMapping';
-import { captureImageWithCamera, promptImageSource } from '../../utils/imageSource';
+import { captureImageWithCamera, pickImageFromLibrary, promptImageSource } from '../../utils/imageSource';
 
 const SUBSCRIPTION_HINT = 'Plan ID: 1 = Basic, 2 = Premium, 3 = Enterprise';
 
 export function ProfileScreen(): React.JSX.Element {
   const navigation = useNavigation<NavigationProp<AppDrawerParamList>>();
-  const { deleteAccount } = useAuth();
+  const { deleteAccount, updateUser, user } = useAuth();
   const [form, setForm] = useState<ProfileFormState>(emptyProfileForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingCarPhoto, setUploadingCarPhoto] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [driverLicenseUri, setDriverLicenseUri] = useState<string | null>(null);
   const [driverLicenseName, setDriverLicenseName] = useState('');
   const [driverLicenseType, setDriverLicenseType] = useState<string | null>(null);
@@ -72,12 +71,15 @@ export function ProfileScreen(): React.JSX.Element {
       setDriverLicenseUri(null);
       setDriverLicenseName('');
       setDriverLicenseType(null);
+      if (profile.avatar || profile.avatar_url) {
+        updateUser({ avatar: profile.avatar, avatar_url: profile.avatar_url });
+      }
     } catch (error) {
       toastAlert('Profile', error instanceof Error ? error.message : 'Failed to load profile.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [updateUser]);
 
   useEffect(() => {
     loadProfile().catch(() => setLoading(false));
@@ -93,42 +95,43 @@ export function ProfileScreen(): React.JSX.Element {
       return null;
     }
 
-    if (source === 'camera') {
-      return captureImageWithCamera();
-    }
-
-    const [file] = await pick({
-      type: [types.images],
-      allowMultiSelection: false,
-      ...(Platform.OS === 'android' ? { allowVirtualFiles: true } : {}),
-    });
-    if (!file || file.error) {
-      if (file?.error) {
-        toastAlert('Profile', file.error);
+    try {
+      if (source === 'camera') {
+        return await captureImageWithCamera();
       }
+      return await pickImageFromLibrary();
+    } catch (error) {
+      toastAlert('Profile', error instanceof Error ? error.message : 'Could not pick a photo.');
       return null;
     }
-
-    let uri = file.uri;
-    const baseName = file.name || 'image.jpg';
-
-    if (Platform.OS === 'ios') {
-      const [copy] = await keepLocalCopy({
-        files: [{ uri: file.uri, fileName: baseName }],
-        destination: 'cachesDirectory',
-      });
-      if (copy.status === 'success') {
-        uri = copy.localUri;
-      }
-    }
-
-    if (!uri) {
-      toastAlert('Profile', 'Could not read the selected file.');
-      return null;
-    }
-
-    return { uri, name: baseName, type: file.type ?? 'image/jpeg' };
   }, []);
+
+  const onChangeAvatar = useCallback(async () => {
+    if (uploadingAvatar) {
+      return;
+    }
+    try {
+      const picked = await pickImageFile();
+      if (!picked) {
+        return;
+      }
+      setUploadingAvatar(true);
+      const result = await portalService.uploadProfileAvatar({
+        uri: picked.uri,
+        name: picked.name,
+        type: picked.type,
+      });
+      updateUser({ avatar: result.avatar, avatar_url: result.avatar_url || picked.uri });
+      toastAlert('Profile', 'Profile photo updated.');
+    } catch (e) {
+      if (isErrorWithCode(e) && e.code === errorCodes.OPERATION_CANCELED) {
+        return;
+      }
+      toastAlert('Profile', e instanceof Error ? e.message : 'Could not update profile photo.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }, [pickImageFile, updateUser, uploadingAvatar]);
 
   const onChooseCarPhoto = useCallback(async () => {
     if (!form.clientId) {
@@ -266,6 +269,38 @@ export function ProfileScreen(): React.JSX.Element {
         <View style={styles.heroCard}>
           <Text style={styles.heroTitle}>Profile Management</Text>
           <Text style={styles.heroSub}>Manage personal, property, and vehicle details in one place.</Text>
+        </View>
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Profile photo</Text>
+          <View style={styles.avatarRow}>
+            <UserAvatar avatar={user?.avatar} avatarUrl={user?.avatar_url} size={72} radius={36} />
+            <View style={styles.avatarTextCol}>
+              <Text style={styles.avatarHint}>
+                This photo is used in the app header, chat, desktop portal, and Admin.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.fileButton,
+                  styles.avatarChangeBtn,
+                  pressed && styles.dim,
+                  uploadingAvatar && styles.dim,
+                ]}
+                onPress={() => {
+                  void onChangeAvatar();
+                }}
+                disabled={uploadingAvatar}
+                accessibilityRole="button"
+                accessibilityLabel="Change profile photo"
+              >
+                {uploadingAvatar ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={styles.fileButtonText}>Change photo</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
         </View>
 
         <View style={styles.sectionCard}>
@@ -455,6 +490,10 @@ const styles = StyleSheet.create({
   heroCard: { backgroundColor: colors.primary, borderRadius: 24, paddingHorizontal: 16, paddingVertical: 16, marginBottom: 12 },
   heroTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
   heroSub: { color: '#DFE9FF', fontSize: 13, lineHeight: 18, marginTop: 6, marginRight: 100 },
+  avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  avatarTextCol: { flex: 1, minWidth: 0 },
+  avatarHint: { color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginBottom: 10 },
+  avatarChangeBtn: { alignSelf: 'flex-start', minWidth: 120, alignItems: 'center' },
   sectionCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,

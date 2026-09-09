@@ -46,6 +46,10 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>HarborShield 360 uses the camera so you can take photos of your project, profile, and chat attachments.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>HarborShield 360 needs access to your photo library so you can upload existing photos for chat, profile, and project media.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>HarborShield 360 may save photos you capture to your library when you choose to keep them.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
 	<key>RCTNewArchEnabled</key>

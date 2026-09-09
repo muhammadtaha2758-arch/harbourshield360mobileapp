@@ -29,6 +29,8 @@ export interface CustomerProfile {
   date_of_loss?: string;
   car_photos?: string;
   driver_license_photo?: string;
+  avatar?: string | null;
+  avatar_url?: string | null;
   APN?: string;
   ZoningCode?: string;
   created_at?: string | null;

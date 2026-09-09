@@ -6,15 +6,20 @@ import { DrawerActions, useFocusEffect, useNavigation } from '@react-navigation/
 import type { NavigationProp } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { portalService } from '../../services/api/portalService';
+import { sessionStorage } from '../../services/storage/sessionStorage';
 import { colors } from '../../theme/colors';
 import { portalScreenLayout, PORTAL_HEADER_TOP_PADDING } from '../../theme/portalScreenLayout';
-import type { ChatGroup, ChatUsersPayload } from '../../types/portal';
+import type { ChatContact, ChatGroup, ChatUsersPayload } from '../../types/portal';
 import type { MessagesStackParamList } from '../../navigation/types';
 import { buildConversationPreviews, enrichConversationSources, type ConversationPreview } from '../../utils/chatMapping';
 import { PortalSearchBar } from '../../components/PortalSearchBar';
 import { ListFilterSheet } from '../../components/ListFilterSheet';
 import { CreateMeetingRoomSheet } from '../../components/CreateMeetingRoomSheet';
 import { StartConversationSheet } from '../../components/StartConversationSheet';
+import {
+  ConversationManageSheet,
+  type ConversationManageRole,
+} from '../../components/ConversationManageSheet';
 import { ChatHeaderAvatar } from '../../components/ChatHeaderAvatar';
 import { NotificationBellPressable } from '../../components/NotificationBellPressable';
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
@@ -22,12 +27,74 @@ import { MESSAGE_STATUS_OPTIONS, STANDARD_SORT_OPTIONS } from '../../constants/l
 import type { SortOption } from '../../types/listFilters';
 import { DEFAULT_SORT } from '../../types/listFilters';
 import { applyListFilters } from '../../utils/listFiltering';
-import type { ChatContact } from '../../types/portal';
+import { useAuth } from '../../context/AuthContext';
+import { subscribeChatInbox, type ChatInboxIncoming } from '../../services/push/chatInboxEvents';
 
 /** Matches CustomTabBar TAB_BASE_HEIGHT so list content clears the absolute tab bar. */
 const TAB_BAR_BASE_HEIGHT = 96;
 
+function wallClockNow(): string {
+  const date = new Date();
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function applyWipedGroupPreviews(groups: ChatGroup[], wipedGroupIds: string[]): ChatGroup[] {
+  if (wipedGroupIds.length === 0) {
+    return groups;
+  }
+  const wiped = new Set(wipedGroupIds);
+  return groups.map((group) => {
+    if (!wiped.has(String(group.id))) {
+      return group;
+    }
+    return {
+      ...group,
+      last_message_preview: '',
+      last_message: '',
+      last_message_time: undefined,
+      last_message_sender: null,
+      unread_count: 0,
+    };
+  });
+}
+
+function keepHigherUnread<T extends { id: number | string; unread_count?: number }>(
+  previous: T[] | undefined,
+  incoming: T[],
+): T[] {
+  const prevById = new Map((previous ?? []).map((item) => [String(item.id), item]));
+  return incoming.map((item) => {
+    const prev = prevById.get(String(item.id));
+    const apiUnread = Number(item.unread_count) || 0;
+    const localUnread = Number(prev?.unread_count) || 0;
+    if (localUnread <= apiUnread) {
+      return item;
+    }
+    return { ...item, unread_count: localUnread };
+  });
+}
+
+function bumpDirectUnread(contacts: ChatContact[], peerUserId: string, event: ChatInboxIncoming): ChatContact[] {
+  return contacts.map((contact) => {
+    if (String(contact.id) !== peerUserId) {
+      return contact;
+    }
+    const unread = (Number(contact.unread_count) || 0) + 1;
+    return {
+      ...contact,
+      unread_count: unread,
+      last_message_preview: event.preview || contact.last_message_preview,
+      last_message: event.preview || contact.last_message_preview,
+      last_message_time: wallClockNow(),
+      last_message_is_mine: false,
+      last_message_sender: event.senderName,
+    };
+  });
+}
+
 export function MessagesScreen(): React.JSX.Element {
+  const { user } = useAuth();
   const navigation = useNavigation<NavigationProp<MessagesStackParamList>>();
   const insets = useSafeAreaInsets();
   const [usersPayload, setUsersPayload] = useState<ChatUsersPayload | null>(null);
@@ -40,6 +107,12 @@ export function MessagesScreen(): React.JSX.Element {
   const [filterOpen, setFilterOpen] = useState(false);
   const [createRoomOpen, setCreateRoomOpen] = useState(false);
   const [startConversationOpen, setStartConversationOpen] = useState(false);
+  const [hiddenConversationIds, setHiddenConversationIds] = useState<string[]>([]);
+  const [managingChatId, setManagingChatId] = useState<string | null>(null);
+  const [manageSheetChat, setManageSheetChat] = useState<ConversationPreview | null>(null);
+  const [manageSheetRole, setManageSheetRole] = useState<ConversationManageRole | null>(null);
+  /** Kept after sheet close so wipe/delete/leave confirms still have the target chat. */
+  const manageSheetChatRef = useRef<ConversationPreview | null>(null);
   const loadInFlightRef = useRef(false);
 
   const load = useCallback(async (isRefresh: boolean, options?: { silent?: boolean }) => {
@@ -56,18 +129,40 @@ export function MessagesScreen(): React.JSX.Element {
           setLoading(true);
         }
       }
+      const wipedGroupIds = await sessionStorage.getWipedGroupIds();
       const [u, g] = await Promise.all([portalService.getChatUsers(), portalService.getChatGroups()]);
-      const currentId = String(u.client?.id ?? '');
-      const enriched = await enrichConversationSources(
-        u.admins ?? [],
-        g,
-        currentId || undefined,
-        (id) => portalService.getDirectMessages(id, 1),
-        (id) => portalService.getGroupMessages(id, 1),
-        u.peers ?? [],
-      );
-      setUsersPayload({ ...u, admins: enriched.admins, peers: enriched.peers });
-      setGroups(enriched.groups);
+      const currentId = String(user?.id ?? u.client?.id ?? '');
+      if (silent) {
+        setUsersPayload((prev) => ({
+          ...u,
+          admins: keepHigherUnread(prev?.admins, u.admins ?? []),
+          peers: keepHigherUnread(prev?.peers, u.peers ?? []),
+        }));
+        setGroups((prev) =>
+          keepHigherUnread(prev, applyWipedGroupPreviews(g.filter((group) => !group.deleted_at), wipedGroupIds)),
+        );
+      } else {
+        const hiddenMessageIds = new Set(await sessionStorage.getHiddenMessageIds());
+        const enriched = await enrichConversationSources(
+          u.admins ?? [],
+          g,
+          currentId || undefined,
+          (id) => portalService.getDirectMessages(id, 1, { markRead: false }),
+          async (id) => {
+            const msgs = await portalService.getGroupMessages(id, 1, { markRead: false });
+            return msgs.filter((msg) => !hiddenMessageIds.has(String(msg.id)));
+          },
+          u.peers ?? [],
+        );
+        setUsersPayload({ ...u, admins: enriched.admins, peers: enriched.peers });
+        // Soft-deleted rooms stay in DB for history; hide them from the mobile inbox.
+        setGroups(
+          applyWipedGroupPreviews(
+            enriched.groups.filter((group) => !group.deleted_at),
+            wipedGroupIds,
+          ),
+        );
+      }
     } catch (error) {
       if (!silent) {
         toastAlert('Messages', error instanceof Error ? error.message : 'Failed to load chat.');
@@ -79,11 +174,12 @@ export function MessagesScreen(): React.JSX.Element {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [user?.id]);
 
   useFocusEffect(
     useCallback(() => {
       void load(false);
+      void sessionStorage.getHiddenConversationIds().then(setHiddenConversationIds);
 
       const intervalId = setInterval(() => {
         void load(true, { silent: true });
@@ -95,16 +191,52 @@ export function MessagesScreen(): React.JSX.Element {
         }
       });
 
+      const unsubscribeInbox = subscribeChatInbox((event) => {
+        if (event.chatType === 'direct' && event.peerUserId) {
+          const peerId = String(event.peerUserId);
+          setUsersPayload((prev) => {
+            if (!prev) {
+              return prev;
+            }
+            return {
+              ...prev,
+              admins: bumpDirectUnread(prev.admins ?? [], peerId, event),
+              peers: bumpDirectUnread(prev.peers ?? [], peerId, event),
+            };
+          });
+        } else if (event.chatType === 'group' && event.groupId) {
+          const groupId = String(event.groupId);
+          void sessionStorage.clearWipedGroup(groupId);
+          setGroups((prev) =>
+            prev.map((group) => {
+              if (String(group.id) !== groupId) {
+                return group;
+              }
+              return {
+                ...group,
+                unread_count: (Number(group.unread_count) || 0) + 1,
+                last_message_preview: event.preview || group.last_message_preview,
+                last_message: event.preview || group.last_message,
+                last_message_time: wallClockNow(),
+                last_message_is_mine: false,
+                last_message_sender: event.senderName,
+              };
+            }),
+          );
+        }
+      });
+
       return () => {
         clearInterval(intervalId);
         appStateSub.remove();
+        unsubscribeInbox();
       };
     }, [load]),
   );
 
   const currentUserId = useMemo(
-    () => String(usersPayload?.client?.id ?? ''),
-    [usersPayload?.client?.id],
+    () => String(user?.id ?? usersPayload?.client?.id ?? ''),
+    [user?.id, usersPayload?.client?.id],
   );
 
   const previews = useMemo(
@@ -119,7 +251,8 @@ export function MessagesScreen(): React.JSX.Element {
   );
 
   const filteredPreviews = useMemo(() => {
-    let list = previews;
+    const hidden = new Set(hiddenConversationIds);
+    let list = previews.filter((chat) => !hidden.has(chat.id));
     if (statusFilter === 'unread') {
       list = list.filter((chat) => chat.unreadCount > 0);
     }
@@ -130,7 +263,7 @@ export function MessagesScreen(): React.JSX.Element {
       getName: (chat) => chat.name,
       getDate: (chat) => chat.lastMessageAt ?? chat.time,
     });
-  }, [previews, searchQuery, sortBy, statusFilter]);
+  }, [previews, searchQuery, sortBy, statusFilter, hiddenConversationIds]);
 
   const filterActive = statusFilter != null || sortBy !== DEFAULT_SORT;
   const listBottomPad = TAB_BAR_BASE_HEIGHT + insets.bottom + 16;
@@ -141,6 +274,32 @@ export function MessagesScreen(): React.JSX.Element {
         toastAlert('Messages', 'Unable to open chat. Please pull to refresh and try again.');
         return;
       }
+
+      if (chat.type === 'direct' && chat.peerUserId) {
+        const peerId = String(chat.peerUserId);
+        setUsersPayload((prev) => {
+          if (!prev) {
+            return prev;
+          }
+          const zeroUnread = (contacts: ChatContact[]): ChatContact[] =>
+            contacts.map((contact) =>
+              String(contact.id) === peerId ? { ...contact, unread_count: 0 } : contact,
+            );
+          return {
+            ...prev,
+            admins: zeroUnread(prev.admins ?? []),
+            peers: zeroUnread(prev.peers ?? []),
+          };
+        });
+      } else if (chat.groupId) {
+        const groupId = String(chat.groupId);
+        setGroups((prev) =>
+          prev.map((group) =>
+            String(group.id) === groupId ? { ...group, unread_count: 0 } : group,
+          ),
+        );
+      }
+
       navigation.navigate('Chat', {
         chatId: chat.id,
         name: chat.name,
@@ -161,6 +320,11 @@ export function MessagesScreen(): React.JSX.Element {
         return;
       }
 
+      const chatId = `direct-${String(peer.id)}`;
+      void sessionStorage.unhideConversation(chatId).then(() => {
+        setHiddenConversationIds((prev) => prev.filter((id) => id !== chatId));
+      });
+
       setUsersPayload((prev) => {
         if (!prev) {
           return prev;
@@ -176,7 +340,7 @@ export function MessagesScreen(): React.JSX.Element {
       });
 
       navigation.navigate('Chat', {
-        chatId: `direct-${String(peer.id)}`,
+        chatId,
         name: String(peer.name || peer.email || 'Chat'),
         type: 'direct',
         currentUserId,
@@ -184,6 +348,119 @@ export function MessagesScreen(): React.JSX.Element {
       });
     },
     [currentUserId, navigation],
+  );
+
+  const hideConversation = useCallback(async (chat: ConversationPreview) => {
+    try {
+      await sessionStorage.hideConversation(chat.id);
+      setHiddenConversationIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+      toastAlert('Messages', 'Removed from your Messages list.');
+    } catch (error) {
+      toastAlert('Messages', error instanceof Error ? error.message : 'Unable to hide conversation.');
+    }
+  }, []);
+
+  const deleteMeetingRoom = useCallback(
+    async (chat: ConversationPreview) => {
+      if (!chat.groupId) {
+        return;
+      }
+      setManagingChatId(chat.id);
+      try {
+        const message = await portalService.deleteChatGroup(chat.groupId);
+        await sessionStorage.hideConversation(chat.id);
+        setHiddenConversationIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+        setGroups((prev) => prev.filter((group) => String(group.id) !== String(chat.groupId)));
+        toastAlert('Messages', message);
+      } catch (error) {
+        await sessionStorage.hideConversation(chat.id);
+        setHiddenConversationIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+        setGroups((prev) => prev.filter((group) => String(group.id) !== String(chat.groupId)));
+        toastAlert(
+          'Messages',
+          'Removed from your Messages list. Only the room creator can close it for everyone.',
+        );
+      } finally {
+        setManagingChatId(null);
+      }
+    },
+    [],
+  );
+
+  const wipeMeetingRoom = useCallback(async (chat: ConversationPreview) => {
+    if (!chat.groupId) {
+      return;
+    }
+    setManagingChatId(chat.id);
+    try {
+      const message = await portalService.wipeChatGroup(chat.groupId);
+      setGroups((prev) =>
+        prev.map((group) =>
+          String(group.id) === String(chat.groupId)
+            ? {
+                ...group,
+                last_message_preview: '',
+                last_message: '',
+                last_message_time: undefined,
+                last_message_sender: null,
+                unread_count: 0,
+              }
+            : group,
+        ),
+      );
+      toastAlert('Messages', message);
+    } catch (error) {
+      toastAlert('Messages', error instanceof Error ? error.message : 'Unable to wipe meeting room.');
+    } finally {
+      setManagingChatId(null);
+    }
+  }, []);
+
+  const leaveMeetingRoom = useCallback(async (chat: ConversationPreview) => {
+    if (!chat.groupId) {
+      return;
+    }
+    setManagingChatId(chat.id);
+    try {
+      const message = await portalService.leaveChatGroup(chat.groupId);
+      await sessionStorage.hideConversation(chat.id);
+      setHiddenConversationIds((prev) => (prev.includes(chat.id) ? prev : [...prev, chat.id]));
+      setGroups((prev) => prev.filter((group) => String(group.id) !== String(chat.groupId)));
+      toastAlert('Messages', message);
+    } catch (error) {
+      toastAlert('Messages', error instanceof Error ? error.message : 'Unable to leave meeting room.');
+    } finally {
+      setManagingChatId(null);
+    }
+  }, []);
+
+  const closeManageSheet = useCallback(() => {
+    setManageSheetChat(null);
+    setManageSheetRole(null);
+  }, []);
+
+  const onManageChat = useCallback(
+    (chat: ConversationPreview) => {
+      if (managingChatId) {
+        return;
+      }
+
+      manageSheetChatRef.current = chat;
+
+      if (chat.type === 'direct') {
+        setManageSheetChat(chat);
+        setManageSheetRole('direct');
+        return;
+      }
+
+      const group = groups.find((item) => String(item.id) === String(chat.groupId));
+      const isCreator =
+        group?.created_by != null && currentUserId !== '' && String(group.created_by) === currentUserId;
+
+      setManageSheetChat(chat);
+      setManageSheetRole(isCreator ? 'creator' : 'member');
+    },
+    [currentUserId, groups, managingChatId],
   );
 
   const openDrawer = useCallback((): void => {
@@ -272,7 +549,13 @@ export function MessagesScreen(): React.JSX.Element {
           </Text>
         }
         renderItem={({ item: chat }) => (
-          <Pressable style={styles.chatRow} onPress={() => openChat(chat)}>
+          <Pressable
+            style={styles.chatRow}
+            onPress={() => openChat(chat)}
+            onLongPress={() => onManageChat(chat)}
+            delayLongPress={350}
+            accessibilityHint="Long press to delete, leave, or hide"
+          >
             <ChatHeaderAvatar name={chat.name} uri={chat.avatarUri} size={48} style={styles.chatAvatarSpacing} />
             <View style={styles.chatBody}>
               <View style={styles.chatTopLine}>
@@ -286,7 +569,9 @@ export function MessagesScreen(): React.JSX.Element {
                 {chat.preview}
               </Text>
             </View>
-            {chat.unreadCount > 0 ? (
+            {managingChatId === chat.id ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : chat.unreadCount > 0 ? (
               <View style={styles.unreadBadge}>
                 <Text style={styles.unreadBadgeText}>
                   {chat.unreadCount > 99 ? '99+' : String(chat.unreadCount)}
@@ -301,6 +586,37 @@ export function MessagesScreen(): React.JSX.Element {
         visible={startConversationOpen}
         onClose={() => setStartConversationOpen(false)}
         onReady={openPeerChat}
+      />
+
+      <ConversationManageSheet
+        visible={manageSheetChat != null && manageSheetRole != null}
+        chat={manageSheetChat}
+        role={manageSheetRole}
+        onClose={closeManageSheet}
+        onHide={() => {
+          const chat = manageSheetChatRef.current;
+          if (chat) {
+            void hideConversation(chat);
+          }
+        }}
+        onWipe={() => {
+          const chat = manageSheetChatRef.current;
+          if (chat) {
+            void wipeMeetingRoom(chat);
+          }
+        }}
+        onDelete={() => {
+          const chat = manageSheetChatRef.current;
+          if (chat) {
+            void deleteMeetingRoom(chat);
+          }
+        }}
+        onLeave={() => {
+          const chat = manageSheetChatRef.current;
+          if (chat) {
+            void leaveMeetingRoom(chat);
+          }
+        }}
       />
 
       <CreateMeetingRoomSheet

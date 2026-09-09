@@ -8,6 +8,7 @@ import {
   resolveChatAttachmentUrlWithFallback,
 } from './chatAttachment';
 import { placeholderAvatarUri } from './chatAvatar';
+import { resolveUserAvatarUrl } from './userAvatar';
 
 export type ConversationPreview = {
   id: string;
@@ -16,6 +17,7 @@ export type ConversationPreview = {
   preview: string;
   time: string;
   lastMessageAt?: string;
+  lastMessageIsMine?: boolean;
   peerUserId?: string;
   groupId?: string;
   unreadCount: number;
@@ -34,6 +36,36 @@ function normalizePreviewText(raw: string): string {
     return 'Document';
   }
   return trimmed;
+}
+
+function recordLastMessageIsMine(record: Record<string, unknown>, currentUserId?: string): boolean {
+  if (record.last_message_is_mine === true) {
+    return true;
+  }
+  if (record.last_message_is_mine === false) {
+    return false;
+  }
+  return (
+    currentUserId != null &&
+    record.last_message_sender_id != null &&
+    String(record.last_message_sender_id) === String(currentUserId)
+  );
+}
+
+/** True when `current` is a later chat timestamp than the snapshot taken at hide. */
+export function isNewerChatActivity(current?: string | null, previous?: string | null): boolean {
+  if (!current || !previous) {
+    return false;
+  }
+  if (current === previous) {
+    return false;
+  }
+  const currentDate = parseChatDateTime(current);
+  const previousDate = parseChatDateTime(previous);
+  if (currentDate && previousDate) {
+    return currentDate.getTime() > previousDate.getTime();
+  }
+  return current !== previous;
 }
 
 function lastMessageIso(record: Record<string, unknown>): string | undefined {
@@ -108,7 +140,14 @@ function buildPreviewLabel(
 }
 
 function contactAvatarUri(contact: Record<string, unknown>): string | undefined {
-  for (const key of ['avatar', 'profile_image', 'profile_photo', 'image', 'photo'] as const) {
+  const resolved = resolveUserAvatarUrl({
+    avatar: typeof contact.avatar === 'string' ? contact.avatar : null,
+    avatar_url: typeof contact.avatar_url === 'string' ? contact.avatar_url : null,
+  });
+  if (resolved) {
+    return resolved;
+  }
+  for (const key of ['profile_image', 'profile_photo', 'image', 'photo'] as const) {
     const value = contact[key];
     if (typeof value === 'string' && value.trim()) {
       return value.trim();
@@ -131,12 +170,47 @@ export type ChatBubble = {
   fileName?: string;
 };
 
-export function formatChatListTime(iso?: string | null): string {
+/**
+ * Chat timestamps are StormBuddi/app wall-clock. Laravel may serialize them as
+ * UTC (`Z`) or with an offset (`-04:00`). Converting those on a PK device
+ * moves evening messages to the next calendar day. Display the date/time
+ * written in the string, matching StormBuddi.
+ */
+export function parseChatDateTime(iso?: string | null): Date | null {
   if (!iso) {
-    return '';
+    return null;
   }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
+  const raw = String(iso).trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const [year, month, day] = raw.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
+  const match = raw.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (!match) {
+    const fallback = new Date(raw);
+    return Number.isNaN(fallback.getTime()) ? null : fallback;
+  }
+
+  return new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] || 0),
+  );
+}
+
+export function formatChatListTime(iso?: string | null): string {
+  const date = parseChatDateTime(iso);
+  if (!date) {
     return '';
   }
   const now = new Date();
@@ -145,7 +219,7 @@ export function formatChatListTime(iso?: string | null): string {
     date.getMonth() === now.getMonth() &&
     date.getDate() === now.getDate();
   if (sameDay) {
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
@@ -156,18 +230,15 @@ export function formatChatListTime(iso?: string | null): string {
   if (isYesterday) {
     return 'Yesterday';
   }
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 export function formatMessageTime(iso?: string | null): string {
-  if (!iso) {
+  const date = parseChatDateTime(iso);
+  if (!date) {
     return '';
   }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 export function previewTextFromMessage(msg: ChatMessageRecord): string {
@@ -292,6 +363,7 @@ export function buildConversationPreviews(
       preview: buildPreviewLabel(g, 'group', currentUserId),
       time: formatChatListTime(lastMessageAt),
       lastMessageAt,
+      lastMessageIsMine: recordLastMessageIsMine(g, currentUserId),
       unreadCount: Number(g.unread_count ?? 0) || 0,
       avatarUri: contactAvatarUri(g) ?? placeholderAvatarUri(groupName),
     });
@@ -318,6 +390,7 @@ export function buildConversationPreviews(
       preview: buildPreviewLabel(contactRecord, 'direct', currentUserId),
       time: formatChatListTime(lastMessageAt),
       lastMessageAt,
+      lastMessageIsMine: recordLastMessageIsMine(contactRecord, currentUserId),
       unreadCount: Number(contact.unread_count ?? 0) || 0,
       avatarUri: contactAvatarUri(contactRecord) ?? placeholderAvatarUri(contactName),
     });

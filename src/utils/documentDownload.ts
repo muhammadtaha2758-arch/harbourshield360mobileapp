@@ -128,24 +128,28 @@ export async function viewCustomerDocument(doc: CustomerDocument): Promise<void>
 }
 
 /**
- * Downloads a customer document to device storage.
+ * Downloads a remote file to device storage.
  * Android: system Download Manager (Downloads folder + notification).
  * iOS: saves locally then opens Quick Look so the file can be saved/shared.
  */
-export async function downloadCustomerDocument(doc: CustomerDocument): Promise<void> {
-  const url = resolveDocumentDownloadUrl(doc);
+export async function downloadRemoteFile(options: {
+  url: string;
+  fileName: string;
+  mime?: string;
+}): Promise<void> {
+  const url = options.url.trim();
   if (!url) {
     throw new Error('Download is not available for this file.');
   }
 
   await ensureAndroidDownloadPermission();
 
-  const fileName = sanitizeFilename(String(doc.original_name || `document-${doc.id}`));
+  const fileName = sanitizeFilename(options.fileName || 'download');
   const headers = downloadUrlNeedsAuth(url) ? buildAuthHeaders() : { Accept: '*/*' };
   const dirs = ReactNativeBlobUtil.fs.dirs;
   const directory = Platform.OS === 'ios' ? dirs.DocumentDir : dirs.DownloadDir;
   const path = `${directory}/${fileName}`;
-  const mime = typeof doc.file_type === 'string' && doc.file_type ? doc.file_type : undefined;
+  const mime = options.mime && options.mime.trim() ? options.mime.trim() : undefined;
 
   const config: ReactNativeBlobUtil.ReactNativeBlobUtilConfig = {
     fileCache: Platform.OS === 'ios',
@@ -179,4 +183,20 @@ export async function downloadCustomerDocument(doc: CustomerDocument): Promise<v
       // File is saved even if preview cannot open.
     }
   }
+}
+
+/**
+ * Downloads a customer document to device storage.
+ */
+export async function downloadCustomerDocument(doc: CustomerDocument): Promise<void> {
+  const url = resolveDocumentDownloadUrl(doc);
+  if (!url) {
+    throw new Error('Download is not available for this file.');
+  }
+
+  await downloadRemoteFile({
+    url,
+    fileName: String(doc.original_name || `document-${doc.id}`),
+    mime: typeof doc.file_type === 'string' && doc.file_type ? doc.file_type : undefined,
+  });
 }

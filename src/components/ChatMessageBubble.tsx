@@ -10,6 +10,7 @@ type Props = {
   peerName?: string;
   peerAvatarUri?: string;
   onPressAttachment?: (msg: ChatBubble) => void;
+  onLongPress?: (msg: ChatBubble) => void;
   openingAttachment?: boolean;
 };
 
@@ -25,7 +26,14 @@ function ReadReceipts(): React.JSX.Element {
 function MessageMeta({ timeLabel, isMine, isRead }: { timeLabel: string; isMine: boolean; isRead?: boolean }): React.JSX.Element {
   return (
     <View style={styles.metaRow}>
-      {timeLabel ? <Text style={[styles.metaTime, isMine ? styles.metaTimeMine : styles.metaTimePeer]}>{timeLabel}</Text> : null}
+      {timeLabel ? (
+        <Text
+          style={[styles.metaTime, isMine ? styles.metaTimeMine : styles.metaTimePeer]}
+          numberOfLines={1}
+        >
+          {timeLabel}
+        </Text>
+      ) : null}
       {isMine && isRead ? <ReadReceipts /> : null}
     </View>
   );
@@ -36,6 +44,7 @@ export function ChatMessageBubble({
   peerName = 'Contact',
   peerAvatarUri,
   onPressAttachment,
+  onLongPress,
   openingAttachment = false,
 }: Props): React.JSX.Element {
   const [imageFailed, setImageFailed] = useState(false);
@@ -52,63 +61,79 @@ export function ChatMessageBubble({
     toastAlert('Open file', 'Unable to open this attachment.');
   };
 
+  const handleLongPress = (): void => {
+    onLongPress?.(msg);
+  };
+
   const bubbleBody = (
-    <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubblePeer]}>
-      {msg.kind === 'photo' && msg.fileUrl ? (
-        <Pressable
-          style={styles.photoPressable}
-          onPress={handleAttachmentPress}
-          disabled={openingAttachment}
-          accessibilityRole="button"
-          accessibilityLabel="View image"
-        >
-          {!imageFailed ? (
-            <Image
-              source={{ uri: msg.fileUrl }}
-              style={styles.messageThumb}
-              resizeMode="cover"
-              onError={() => setImageFailed(true)}
-            />
-          ) : (
-            <View style={styles.imageFallback}>
-              <Text style={styles.imageFallbackText}>Image unavailable</Text>
-            </View>
-          )}
-          {openingAttachment ? (
-            <View style={styles.attachmentLoadingOverlay}>
+    <Pressable
+      style={styles.bubblePressable}
+      onLongPress={handleLongPress}
+      delayLongPress={350}
+      accessibilityRole="button"
+      accessibilityLabel="Message options"
+    >
+      <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubblePeer]}>
+        {msg.kind === 'photo' && msg.fileUrl ? (
+          <Pressable
+            style={styles.photoPressable}
+            onPress={handleAttachmentPress}
+            onLongPress={handleLongPress}
+            delayLongPress={350}
+            disabled={openingAttachment}
+            accessibilityRole="button"
+            accessibilityLabel="View image"
+          >
+            {!imageFailed ? (
+              <Image
+                source={{ uri: msg.fileUrl }}
+                style={styles.messageThumb}
+                resizeMode="cover"
+                onError={() => setImageFailed(true)}
+              />
+            ) : (
+              <View style={styles.imageFallback}>
+                <Text style={styles.imageFallbackText}>Image unavailable</Text>
+              </View>
+            )}
+            {openingAttachment ? (
+              <View style={styles.attachmentLoadingOverlay}>
+                <ActivityIndicator size="small" color="#3480E9" />
+              </View>
+            ) : null}
+          </Pressable>
+        ) : null}
+
+        {msg.kind === 'document' && msg.fileUrl ? (
+          <Pressable
+            style={styles.documentRow}
+            onPress={handleAttachmentPress}
+            onLongPress={handleLongPress}
+            delayLongPress={350}
+            disabled={openingAttachment}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${msg.fileName || 'document'}`}
+          >
+            {openingAttachment ? (
               <ActivityIndicator size="small" color="#3480E9" />
-            </View>
-          ) : null}
-        </Pressable>
-      ) : null}
+            ) : (
+              <Text style={styles.documentIcon}>📄</Text>
+            )}
+            <Text style={styles.documentName} numberOfLines={2}>
+              {msg.fileName || 'Open document'}
+            </Text>
+          </Pressable>
+        ) : null}
 
-      {msg.kind === 'document' && msg.fileUrl ? (
-        <Pressable
-          style={styles.documentRow}
-          onPress={handleAttachmentPress}
-          disabled={openingAttachment}
-          accessibilityRole="button"
-          accessibilityLabel={`Open ${msg.fileName || 'document'}`}
-        >
-          {openingAttachment ? (
-            <ActivityIndicator size="small" color="#3480E9" />
-          ) : (
-            <Text style={styles.documentIcon}>📄</Text>
-          )}
-          <Text style={styles.documentName} numberOfLines={2}>
-            {msg.fileName || 'Open document'}
-          </Text>
-        </Pressable>
-      ) : null}
+        {msg.kind === 'text' && msg.text ? <Text style={styles.bubbleText}>{msg.text}</Text> : null}
 
-      {msg.kind === 'text' && msg.text ? <Text style={styles.bubbleText}>{msg.text}</Text> : null}
+        {msg.kind !== 'text' && msg.text && !/^\[(PHOTO|DOCUMENT)\]/i.test(msg.text) ? (
+          <Text style={[styles.bubbleText, styles.captionText]}>{msg.text}</Text>
+        ) : null}
 
-      {msg.kind !== 'text' && msg.text && !/^\[(PHOTO|DOCUMENT)\]/i.test(msg.text) ? (
-        <Text style={[styles.bubbleText, styles.captionText]}>{msg.text}</Text>
-      ) : null}
-
-      <MessageMeta timeLabel={msg.timeLabel} isMine={isMine} isRead={msg.isRead} />
-    </View>
+        <MessageMeta timeLabel={msg.timeLabel} isMine={isMine} isRead={msg.isRead} />
+      </View>
+    </Pressable>
   );
 
   if (isMine) {
@@ -139,12 +164,16 @@ const styles = StyleSheet.create({
     marginRight: 8,
     marginBottom: 2,
   },
-  bubble: {
+  bubblePressable: {
     maxWidth: '78%',
+    flexDirection: 'row',
+  },
+  bubble: {
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingTop: 10,
-    paddingBottom: 8,
+    paddingBottom: 6,
+    minWidth: 96,
   },
   bubblePeer: {
     backgroundColor: '#FFFFFF',
@@ -169,12 +198,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
+    alignSelf: 'stretch',
     gap: 4,
-    marginTop: 6,
+    marginTop: 4,
   },
   metaTime: {
     fontSize: 11,
+    lineHeight: 14,
     fontWeight: '500',
+    includeFontPadding: false,
   },
   metaTimePeer: {
     color: '#9CA3AF',

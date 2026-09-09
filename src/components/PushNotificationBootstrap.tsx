@@ -1,10 +1,35 @@
 import { useEffect } from 'react';
+import { AppState } from 'react-native';
 import messaging from '@react-native-firebase/messaging';
+import type { FirebaseMessagingTypes } from '@react-native-firebase/messaging';
 
 import { useAuth } from '../context/AuthContext';
 import { navigationRef } from '../navigation/navigationRef';
+import { portalService } from '../services/api/portalService';
 import { registerDeviceTokenWithBackend, syncPushToken } from '../services/api/pushService';
+import { shouldSuppressChatPush } from '../services/push/activeChat';
+import { emitChatInboxIncoming } from '../services/push/chatInboxEvents';
+import {
+  clearAppBadge,
+  displayMessageNotification,
+  ensureMessageNotificationChannel,
+  setAppBadgeCount,
+  subscribeNotificationOpen,
+} from '../services/push/localNotifications';
 import { sessionStorage } from '../services/storage/sessionStorage';
+
+function asStringData(
+  data: FirebaseMessagingTypes.RemoteMessage['data'] | Record<string, unknown> | undefined,
+): Record<string, string> | undefined {
+  if (!data || typeof data !== 'object') {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  Object.entries(data).forEach(([key, value]) => {
+    out[key] = String(value ?? '');
+  });
+  return out;
+}
 
 export function PushNotificationBootstrap(): null {
   const { token, user, isInitializing } = useAuth();
@@ -17,8 +42,18 @@ export function PushNotificationBootstrap(): null {
     let unsubscribeOnMessage: (() => void) | undefined;
     let unsubscribeOnOpened: (() => void) | undefined;
     let unsubscribeTokenRefresh: (() => void) | undefined;
+    let unsubscribeNotifee: (() => void) | undefined;
     let cancelled = false;
     const currentUserId = String(user?.id ?? '');
+
+    const syncBadgeFromServer = async (): Promise<void> => {
+      try {
+        const count = await portalService.getNotificationsUnreadCount();
+        await setAppBadgeCount(count);
+      } catch {
+        // ignore
+      }
+    };
 
     const openChat = (data: Record<string, string> | undefined): void => {
       if (!data || data.type !== 'chat_message') {
@@ -60,14 +95,16 @@ export function PushNotificationBootstrap(): null {
       };
 
       tryNavigate();
+      void syncBadgeFromServer();
     };
 
     const bootstrap = async (): Promise<void> => {
-      // Let the post-login UI settle, then show the OS permission dialog.
       await new Promise<void>((resolve) => setTimeout(resolve, 800));
       if (cancelled) {
         return;
       }
+
+      await ensureMessageNotificationChannel();
 
       const fcmToken = await syncPushToken();
       if (cancelled) {
@@ -77,12 +114,47 @@ export function PushNotificationBootstrap(): null {
         await sessionStorage.setFcmToken(fcmToken);
       }
 
-      unsubscribeOnMessage = messaging().onMessage(async () => {
-        // Open chats already poll; OS shows the notification when app is backgrounded.
+      await syncBadgeFromServer();
+
+      unsubscribeOnMessage = messaging().onMessage(async (remoteMessage) => {
+        const data = asStringData(remoteMessage.data);
+        if (shouldSuppressChatPush(data)) {
+          return;
+        }
+
+        if (data?.type === 'chat_message') {
+          emitChatInboxIncoming({
+            chatType: data.chat_type === 'group' ? 'group' : 'direct',
+            peerUserId: data.peer_user_id,
+            groupId: data.group_id,
+            preview: data.preview || remoteMessage.notification?.body,
+            senderName: data.sender_name,
+          });
+        }
+
+        const title =
+          remoteMessage.notification?.title ||
+          data?.sender_name ||
+          data?.group_name ||
+          'HarborShield';
+        const body = remoteMessage.notification?.body || data?.preview || 'New message';
+        const badgeRaw = data?.badge;
+        const badge = badgeRaw != null && badgeRaw !== '' ? Number(badgeRaw) : undefined;
+
+        await displayMessageNotification({
+          title,
+          body,
+          data,
+          badge: Number.isFinite(badge) ? badge : undefined,
+        });
       });
 
       unsubscribeOnOpened = messaging().onNotificationOpenedApp((remoteMessage) => {
-        openChat(remoteMessage.data as Record<string, string> | undefined);
+        openChat(asStringData(remoteMessage.data));
+      });
+
+      unsubscribeNotifee = subscribeNotificationOpen((data) => {
+        openChat(data);
       });
 
       unsubscribeTokenRefresh = messaging().onTokenRefresh(async (nextToken) => {
@@ -96,19 +168,33 @@ export function PushNotificationBootstrap(): null {
 
       const initial = await messaging().getInitialNotification();
       if (initial?.data) {
-        openChat(initial.data as Record<string, string>);
+        openChat(asStringData(initial.data));
       }
     };
 
     bootstrap().catch(() => undefined);
+
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        void syncBadgeFromServer();
+      }
+    });
 
     return () => {
       cancelled = true;
       unsubscribeOnMessage?.();
       unsubscribeOnOpened?.();
       unsubscribeTokenRefresh?.();
+      unsubscribeNotifee?.();
+      appStateSub.remove();
     };
   }, [isInitializing, token, user?.id]);
+
+  useEffect(() => {
+    if (!token) {
+      void clearAppBadge();
+    }
+  }, [token]);
 
   return null;
 }

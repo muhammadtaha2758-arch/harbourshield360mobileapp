@@ -1,5 +1,5 @@
 import { Alert, PermissionsAndroid, Platform } from 'react-native';
-import { launchCamera } from 'react-native-image-picker';
+import { launchCamera, launchImageLibrary, type Asset, type ImagePickerResponse } from 'react-native-image-picker';
 
 export type CapturedImage = {
   uri: string;
@@ -53,6 +53,79 @@ async function ensureCameraPermission(): Promise<boolean> {
 }
 
 /**
+ * On Android 12 and below, reading the gallery needs READ_EXTERNAL_STORAGE.
+ * Android 13+ system photo picker typically does not require a runtime grant.
+ */
+async function ensureLibraryPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') {
+    return true;
+  }
+
+  const apiLevel =
+    typeof Platform.Version === 'number' ? Platform.Version : parseInt(String(Platform.Version), 10);
+
+  if (Number.isFinite(apiLevel) && apiLevel >= 33) {
+    return true;
+  }
+
+  const permission = PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE;
+  const alreadyGranted = await PermissionsAndroid.check(permission);
+  if (alreadyGranted) {
+    return true;
+  }
+
+  const result = await PermissionsAndroid.request(permission, {
+    title: 'Photo library access',
+    message: 'HarborShield 360 needs access to your photos so you can attach existing pictures.',
+    buttonPositive: 'Allow',
+    buttonNegative: 'Not now',
+  });
+  return result === PermissionsAndroid.RESULTS.GRANTED;
+}
+
+function assetToCapturedImage(asset: Asset | undefined, fallbackLabel: string): CapturedImage {
+  if (!asset?.uri) {
+    throw new Error(`Could not read the ${fallbackLabel}.`);
+  }
+
+  let uri = asset.uri;
+  if (Platform.OS === 'android' && uri.startsWith('/') && !uri.startsWith('file://') && !uri.startsWith('content://')) {
+    uri = `file://${uri}`;
+  }
+
+  let type = (asset.type ?? 'image/jpeg').toLowerCase();
+  if (type === 'image/jpg') {
+    type = 'image/jpeg';
+  }
+
+  let name = asset.fileName || `photo-${Date.now()}.jpg`;
+  if (!/\.(jpe?g|png|gif|webp)$/i.test(name)) {
+    const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : type.includes('gif') ? 'gif' : 'jpg';
+    name = `${name.replace(/\.[^.]+$/, '')}.${ext}`;
+  }
+
+  if (/\.(heic|heif)$/i.test(name)) {
+    name = `${name.replace(/\.[^.]+$/, '')}.jpg`;
+    type = 'image/jpeg';
+  }
+
+  return { uri, name, type };
+}
+
+function throwIfPickerError(result: ImagePickerResponse, unavailableMessage: string): void {
+  if (!result.errorCode) {
+    return;
+  }
+  if (result.errorCode === 'permission') {
+    throw new Error('Permission is required to continue. You can enable it in Settings.');
+  }
+  if (result.errorCode === 'camera_unavailable') {
+    throw new Error(unavailableMessage);
+  }
+  throw new Error(result.errorMessage || 'Unable to open the photo picker.');
+}
+
+/**
  * Opens the device camera and returns the captured photo, or null when cancelled.
  * Throws with a user-friendly message when the camera is unavailable or denied.
  */
@@ -65,6 +138,8 @@ export async function captureImageWithCamera(): Promise<CapturedImage | null> {
   const result = await launchCamera({
     mediaType: 'photo',
     quality: 0.8,
+    maxWidth: 1600,
+    maxHeight: 1600,
     saveToPhotos: false,
     cameraType: 'back',
   });
@@ -72,22 +147,32 @@ export async function captureImageWithCamera(): Promise<CapturedImage | null> {
   if (result.didCancel) {
     return null;
   }
-  if (result.errorCode) {
+  throwIfPickerError(result, 'The camera is not available on this device.');
+  return assetToCapturedImage(result.assets?.[0], 'captured photo');
+}
+
+/**
+ * Opens the device photo library and returns the selected photo, or null when cancelled.
+ */
+export async function pickImageFromLibrary(): Promise<CapturedImage | null> {
+  const permitted = await ensureLibraryPermission();
+  if (!permitted) {
     throw new Error(
-      result.errorCode === 'camera_unavailable'
-        ? 'The camera is not available on this device.'
-        : result.errorMessage || 'Unable to open the camera.',
+      'Photo library permission is required to choose an existing photo. You can enable it in Settings.',
     );
   }
 
-  const asset = result.assets?.[0];
-  if (!asset?.uri) {
-    throw new Error('Could not read the captured photo.');
-  }
+  const result = await launchImageLibrary({
+    mediaType: 'photo',
+    quality: 0.8,
+    maxWidth: 1600,
+    maxHeight: 1600,
+    selectionLimit: 1,
+  });
 
-  return {
-    uri: asset.uri,
-    name: asset.fileName || `photo-${Date.now()}.jpg`,
-    type: asset.type ?? 'image/jpeg',
-  };
+  if (result.didCancel) {
+    return null;
+  }
+  throwIfPickerError(result, 'The photo library is not available on this device.');
+  return assetToCapturedImage(result.assets?.[0], 'selected photo');
 }

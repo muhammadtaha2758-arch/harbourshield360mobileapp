@@ -30,18 +30,107 @@ import type { CustomerProfile, ProfileUpdatePayload, ProfileUpdateResponse } fro
 import type { DashboardPayload } from '../../types/dashboard';
 import { normalizeJobDetailResponse } from '../../utils/jobDetailMapping';
 import { httpClient } from './httpClient';
+import { sessionStorage } from '../storage/sessionStorage';
+import { postMultipartJson } from '../../utils/nativeFileUpload';
 
 const getError = (error: unknown, fallback: string): Error => {
-  const axiosError = error as AxiosError<{ message?: string; errors?: Record<string, string[]> }>;
-  const data = axiosError.response?.data;
-  if (data?.errors && typeof data.errors === 'object') {
-    const firstKey = Object.keys(data.errors)[0];
-    const firstMsg = firstKey ? data.errors[firstKey]?.[0] : undefined;
-    if (firstMsg) {
-      return new Error(firstMsg);
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { message?: string; errors?: Record<string, string[]> } | string | undefined;
+    const status = error.response?.status;
+    if (data && typeof data === 'object' && data.errors && typeof data.errors === 'object') {
+      const firstKey = Object.keys(data.errors)[0];
+      const firstMsg = firstKey ? data.errors[firstKey]?.[0] : undefined;
+      if (firstMsg) {
+        return new Error(firstMsg);
+      }
+    }
+    if (data && typeof data === 'object' && typeof data.message === 'string' && data.message.trim()) {
+      return new Error(data.message);
+    }
+    if (status) {
+      return new Error(`${fallback} (${status})`);
+    }
+    if (error.message) {
+      return new Error(`${fallback}: ${error.message}`);
     }
   }
-  return new Error(data?.message || fallback);
+  if (error instanceof Error && error.message) {
+    return error;
+  }
+  return new Error(fallback);
+};
+
+type WipeApiBody = {
+  success?: boolean;
+  error?: string | { message?: string; code?: string };
+  message?: string;
+};
+
+const wipeErrorText = (data: WipeApiBody | string | undefined, fallback: string): string => {
+  if (!data || typeof data === 'string') {
+    return fallback;
+  }
+  const errorField = data.error;
+  if (typeof errorField === 'string' && errorField.trim()) {
+    return errorField;
+  }
+  if (errorField && typeof errorField === 'object' && typeof errorField.message === 'string') {
+    return errorField.message;
+  }
+  if (typeof data.message === 'string' && data.message.trim()) {
+    return data.message;
+  }
+  return fallback;
+};
+
+const canFallbackWipe = (status?: number): boolean =>
+  status == null || status === 403 || status === 404 || status === 405 || status === 500 || status === 501;
+
+const hideAllVisibleGroupMessages = async (groupId: number | string): Promise<void> => {
+  const ids: string[] = [];
+  let lastMessageId: number | undefined;
+  for (let page = 0; page < 40; page += 1) {
+    const response = await httpClient.get<ChatMessagesResponse>(
+      env.mobileMessages.groupMessages(groupId),
+      {
+        params: {
+          limit: 100,
+          mark_read: 0,
+          ...(lastMessageId ? { last_message_id: lastMessageId } : {}),
+        },
+      },
+    );
+    const batch = Array.isArray(response.data.messages) ? response.data.messages : [];
+    if (batch.length === 0) {
+      break;
+    }
+    batch.forEach((msg) => {
+      if (msg?.id != null) {
+        ids.push(String(msg.id));
+      }
+    });
+    const oldestId = Number(batch[batch.length - 1]?.id);
+    if (!Number.isFinite(oldestId) || batch.length < 100) {
+      break;
+    }
+    lastMessageId = oldestId;
+  }
+
+  if (ids.length === 0) {
+    await sessionStorage.markChatGroupWiped(groupId);
+    return;
+  }
+
+  await sessionStorage.hideChatMessages(ids);
+  await sessionStorage.markChatGroupWiped(groupId);
+
+  for (const id of ids) {
+    try {
+      await httpClient.post(env.mobileMessages.hideMessage(id), { mode: 'me' });
+    } catch {
+      // Local hide already applied; keep going if the server hide route is missing.
+    }
+  }
 };
 
 const isMockDataMode = (): boolean => env.useMockData === true;
@@ -1066,14 +1155,23 @@ export const portalService = {
     }
   },
 
-  async getDirectMessages(peerUserId: number | string, limit = 50): Promise<ChatMessageRecord[]> {
+  async getDirectMessages(
+    peerUserId: number | string,
+    limit = 50,
+    options?: { markRead?: boolean },
+  ): Promise<ChatMessageRecord[]> {
     if (env.useMockAuth) {
       return [];
     }
     try {
       const response = await httpClient.get<ChatMessagesResponse>(
         env.mobileMessages.directMessages(peerUserId),
-        { params: { limit } },
+        {
+          params: {
+            limit,
+            ...(options?.markRead === false ? { mark_read: 0 } : {}),
+          },
+        },
       );
       return response.data.messages ?? [];
     } catch (error) {
@@ -1113,14 +1211,24 @@ export const portalService = {
     }
   },
 
-  async getGroupMessages(groupId: number | string, limit = 50): Promise<ChatMessageRecord[]> {
+  async getGroupMessages(
+    groupId: number | string,
+    limit = 50,
+    options?: { markRead?: boolean; lastMessageId?: number | string },
+  ): Promise<ChatMessageRecord[]> {
     if (env.useMockAuth) {
       return [];
     }
     try {
       const response = await httpClient.get<ChatMessagesResponse>(
         env.mobileMessages.groupMessages(groupId),
-        { params: { limit } },
+        {
+          params: {
+            limit,
+            ...(options?.markRead === false ? { mark_read: 0 } : {}),
+            ...(options?.lastMessageId != null ? { last_message_id: options.lastMessageId } : {}),
+          },
+        },
       );
       return response.data.messages ?? [];
     } catch (error) {
@@ -1207,6 +1315,143 @@ export const portalService = {
       await httpClient.post(env.mobileMessages.markGroupRead(groupId));
     } catch {
       // Non-blocking
+    }
+  },
+
+  async deleteChatGroup(groupId: number | string): Promise<string> {
+    if (env.useMockAuth) {
+      return 'Meeting room deleted.';
+    }
+    try {
+      const response = await httpClient.post<{ success?: boolean; error?: string; message?: string }>(
+        env.mobileMessages.deleteGroup(groupId),
+      );
+      if (response.data.success !== true) {
+        throw new Error(response.data.error || 'Unable to delete meeting room.');
+      }
+      return response.data.message || 'Meeting room deleted.';
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      const axiosError = error as AxiosError<{ error?: string; message?: string }>;
+      const data = axiosError.response?.data;
+      const serverError = typeof data?.error === 'string' ? data.error : data?.message;
+      throw new Error(serverError || 'Unable to delete meeting room.');
+    }
+  },
+
+  async wipeChatGroup(groupId: number | string): Promise<string> {
+    if (env.useMockAuth) {
+      return 'Meeting room wiped.';
+    }
+
+    const postWipe = async (path: string): Promise<string> => {
+      const response = await httpClient.post<WipeApiBody | string>(path, {});
+      const data = response.data;
+      if (typeof data === 'string') {
+        throw Object.assign(new Error('Unable to wipe meeting room.'), { wipeStatus: 404 });
+      }
+      if (data && data.success === false) {
+        throw Object.assign(new Error(wipeErrorText(data, 'Unable to wipe meeting room.')), {
+          wipeStatus: response.status,
+        });
+      }
+      return (typeof data?.message === 'string' && data.message) || 'Meeting room wiped.';
+    };
+
+    try {
+      const message = await postWipe(env.mobileMessages.wipeGroup(groupId));
+      await sessionStorage.markChatGroupWiped(groupId);
+      return message;
+    } catch (mobileError) {
+      const axiosError = mobileError as AxiosError<WipeApiBody | string> & { wipeStatus?: number };
+      const status = axiosError.response?.status ?? axiosError.wipeStatus;
+      if (status === 401) {
+        throw new Error('Your session expired. Sign in again and retry wipe.');
+      }
+
+      try {
+        const webMessage = await postWipe(`chat/groups/${groupId}/wipe`);
+        await sessionStorage.markChatGroupWiped(groupId);
+        return webMessage;
+      } catch (webError) {
+        const webAxios = webError as AxiosError<WipeApiBody | string> & { wipeStatus?: number };
+        const webStatus = webAxios.response?.status ?? webAxios.wipeStatus;
+        const fallbackStatus = canFallbackWipe(status) ? status : webStatus;
+        if (!canFallbackWipe(status) && !canFallbackWipe(webStatus)) {
+          throw new Error(
+            wipeErrorText(axiosError.response?.data, 'Unable to wipe meeting room.') +
+              (status ? ` (${status})` : ''),
+          );
+        }
+
+        try {
+          await hideAllVisibleGroupMessages(groupId);
+          return 'Meeting room wiped.';
+        } catch {
+          throw new Error(
+            wipeErrorText(axiosError.response?.data, 'Unable to wipe meeting room.') +
+              (fallbackStatus ? ` (${fallbackStatus})` : ''),
+          );
+        }
+      }
+    }
+  },
+
+  async leaveChatGroup(groupId: number | string): Promise<string> {
+    if (env.useMockAuth) {
+      return 'You left the meeting room.';
+    }
+    try {
+      const response = await httpClient.post<{ success?: boolean; error?: string; message?: string }>(
+        env.mobileMessages.leaveGroup(groupId),
+      );
+      if (response.data.success !== true) {
+        throw new Error(response.data.error || 'Unable to leave meeting room.');
+      }
+      return response.data.message || 'You left the meeting room.';
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      const axiosError = error as AxiosError<{ error?: string; message?: string }>;
+      throw new Error(
+        axiosError.response?.data?.error ||
+          axiosError.response?.data?.message ||
+          'Unable to leave meeting room.',
+      );
+    }
+  },
+
+  async hideMessageForMe(messageId: number | string): Promise<string> {
+    if (env.useMockAuth) {
+      return 'Message deleted for you.';
+    }
+    try {
+      const response = await httpClient.post<{
+        success?: boolean;
+        error?: string | { message?: string };
+        message?: string;
+      }>(env.mobileMessages.hideMessage(messageId), { mode: 'me' });
+      if (response.data.success !== true) {
+        const err = response.data.error;
+        const errMsg =
+          typeof err === 'string' ? err : err?.message || 'Unable to delete message.';
+        throw new Error(errMsg);
+      }
+      return response.data.message || 'Message deleted for you.';
+    } catch (error) {
+      if (error instanceof Error && !(error as AxiosError).isAxiosError) {
+        throw error;
+      }
+      const axiosError = error as AxiosError<{
+        error?: string | { message?: string };
+        message?: string;
+      }>;
+      const err = axiosError.response?.data?.error;
+      const errMsg = typeof err === 'string' ? err : err?.message;
+      throw new Error(errMsg || axiosError.response?.data?.message || 'Unable to delete message.');
     }
   },
 
@@ -1434,6 +1679,79 @@ export const portalService = {
       return { picturePath: String(picturePath), pictureUrl };
     } catch (error) {
       throw getError(error, 'Unable to upload car photo.');
+    }
+  },
+
+  async uploadProfileAvatar(payload: {
+    uri: string;
+    name: string;
+    type: string | null;
+  }): Promise<{ avatar: string; avatar_url: string | null }> {
+    if (env.useMockAuth) {
+      return { avatar: payload.name, avatar_url: payload.uri };
+    }
+
+    let uri = payload.uri;
+    if (uri.startsWith('/') && !uri.startsWith('file://') && !uri.startsWith('content://')) {
+      uri = `file://${uri}`;
+    }
+
+    let type = (payload.type || 'image/jpeg').toLowerCase();
+    if (type === 'image/jpg') {
+      type = 'image/jpeg';
+    }
+
+    let name = payload.name || `avatar-${Date.now()}.jpg`;
+    if (!/\.(jpe?g|png|gif|webp)$/i.test(name)) {
+      name = `${name.replace(/\.[^.]+$/, '')}.jpg`;
+      type = 'image/jpeg';
+    }
+
+    const readAvatar = (data: Record<string, unknown>): { avatar: string; avatar_url: string | null } => {
+      const nested =
+        data.data && typeof data.data === 'object' ? (data.data as Record<string, unknown>) : undefined;
+      const avatar = String(nested?.avatar ?? data.avatar ?? '');
+      const avatarUrlRaw = nested?.avatar_url ?? data.avatar_url;
+      const avatarUrl = typeof avatarUrlRaw === 'string' && avatarUrlRaw ? avatarUrlRaw : null;
+      if (!avatar && !avatarUrl) {
+        throw new Error('Unable to update profile photo.');
+      }
+      return { avatar: avatar || payload.name, avatar_url: avatarUrl };
+    };
+
+    const urls = [
+      `${env.apiBaseUrl.replace(/\/+$/, '')}/${env.mobileProfile.avatar}`,
+      `${env.apiBaseUrl.replace(/\/+$/, '')}/${env.mobileProfile.update}`,
+    ];
+
+    try {
+      let lastError: unknown;
+      for (const url of urls) {
+        try {
+          const json = await postMultipartJson(url, {
+            fieldName: 'avatar',
+            uri,
+            fileName: name,
+            mime: type,
+          });
+          if (json.success === false) {
+            throw new Error(
+              typeof json.message === 'string' ? json.message : 'Unable to update profile photo.',
+            );
+          }
+          return readAvatar(json);
+        } catch (error) {
+          lastError = error;
+          const message = error instanceof Error ? error.message : '';
+          const isMissing = /\(404\)|\(405\)|Upload failed \(404\)|Upload failed \(405\)/.test(message);
+          if (!isMissing) {
+            throw error;
+          }
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error('Unable to update profile photo.');
+    } catch (error) {
+      throw getError(error, 'Unable to update profile photo.');
     }
   },
 };

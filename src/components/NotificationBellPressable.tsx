@@ -9,6 +9,7 @@ import { colors } from '../theme/colors';
 import type { PortalNotification } from '../types/notifications';
 import { formatNotificationTime } from '../utils/formatNotificationTime';
 import { navigateFromNotification } from '../utils/notificationNavigation';
+import { setAppBadgeCount } from '../services/push/localNotifications';
 
 const REFRESH_MS = 30000;
 
@@ -53,6 +54,7 @@ export function NotificationBellPressable({
     try {
       const count = await portalService.getNotificationsUnreadCount();
       setUnreadCount(count);
+      await setAppBadgeCount(count);
     } catch {
       // Badge is best-effort
     }
@@ -64,6 +66,7 @@ export function NotificationBellPressable({
       const payload = await portalService.getNotifications();
       setNotifications(payload.notifications);
       setUnreadCount(payload.unread_count);
+      await setAppBadgeCount(payload.unread_count);
     } catch (error) {
       toastAlert(
         'Notifications',
@@ -82,6 +85,7 @@ export function NotificationBellPressable({
       await portalService.markNotificationsReadOnOpen();
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
+      await setAppBadgeCount(0);
     } catch {
       // Keep list visible even if mark-on-open fails
     }
@@ -96,6 +100,7 @@ export function NotificationBellPressable({
       await portalService.markAllNotificationsRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
+      await setAppBadgeCount(0);
     } catch (error) {
       toastAlert(
         'Notifications',
@@ -117,7 +122,11 @@ export function NotificationBellPressable({
         setNotifications((prev) =>
           prev.map((n) => (String(n.id) === String(item.id) ? { ...n, read: true } : n)),
         );
-        setUnreadCount((prev) => Math.max(0, prev - (item.read ? 0 : 1)));
+        setUnreadCount((prev) => {
+          const next = Math.max(0, prev - (item.read ? 0 : 1));
+          void setAppBadgeCount(next);
+          return next;
+        });
 
         closeModal();
         navigateFromNotification(navigation, navigationData, item.notification_type);

@@ -45,6 +45,10 @@ export type TimelineStepItem = {
   title: string;
   lines: string[];
   url?: string;
+  openAs?: 'file' | 'link';
+  fileName?: string;
+  fileKind?: 'photo' | 'document';
+  mime?: string;
 };
 
 export type TimelineStepView = {
@@ -111,6 +115,32 @@ function publicProposalUrl(id: string | number): string {
 
 function publicContractUrl(id: string | number): string {
   return `${env.portalPublicUrl.replace(/\/+$/, '')}/c/${id}`;
+}
+
+/** Same as web jobView `viewFile`: StormBuddi origin + stored path. */
+function resolveProjectFileUrl(raw?: string | null): string | undefined {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  const base = env.stormBuddiApiOrigin.replace(/\/+$/, '');
+  const path = trimmed.replace(/^\/+/, '');
+  return `${base}/${path}`;
+}
+
+function projectFileKind(file: JobFileRecord): 'photo' | 'document' {
+  const type = String(file.file_type || '').toLowerCase();
+  const name = String(file.original_name || file.url || '').toLowerCase();
+  if (type.startsWith('image/') || /\.(jpe?g|png|gif|webp|heic|bmp|svg)$/i.test(name)) {
+    return 'photo';
+  }
+  return 'document';
 }
 
 function asArray<T>(value: T[] | Record<string, T> | null | undefined): T[] {
@@ -243,7 +273,11 @@ function fileItem(file: JobFileRecord, fallbackLabel: string): TimelineStepItem 
     id: `file-${file.id}`,
     title: file.original_name?.trim() || fallbackLabel,
     lines,
-    url: file.url,
+    url: resolveProjectFileUrl(file.url),
+    openAs: 'file',
+    fileName: file.original_name?.trim() || fallbackLabel,
+    fileKind: projectFileKind(file),
+    mime: file.file_type?.trim() || undefined,
   };
 }
 
@@ -267,6 +301,7 @@ function proposalItem(proposal: JobProposalRecord): TimelineStepItem {
     title: `Proposal #${proposal.id}`,
     lines,
     url: publicProposalUrl(proposal.id),
+    openAs: 'link',
   };
 }
 
@@ -355,6 +390,7 @@ function contractItem(contract: JobContractRecord): TimelineStepItem {
     title: contract.name || `Contract #${contract.id}`,
     lines,
     url: publicContractUrl(contract.id),
+    openAs: 'link',
   };
 }
 

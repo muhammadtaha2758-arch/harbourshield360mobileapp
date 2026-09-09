@@ -20,6 +20,7 @@ import ScheduleIcon from '../assets/icons/drawer-icons/Schedule.svg';
 import MessagesIcon from '../assets/icons/drawer-icons/Messages.svg';
 import ServicesIcon from '../assets/icons/drawer-icons/services.svg';
 import FinancingIcon from '../assets/icons/drawer-icons/financing.svg';
+import BillsIcon from '../assets/icons/drawer-icons/bills.svg';
 import ProfileIcon from '../assets/icons/drawer-icons/profile.svg';
 import VendorsIcon from '../assets/icons/drawer-icons/vendors.svg';
 import LogoutIcon from '../assets/icons/drawer-icons/logout.svg';
@@ -29,6 +30,7 @@ type MenuRouteName =
   | 'Dashboard'
   | 'Projects'
   | 'EstimatesInvoices'
+  | 'MyBills'
   | 'Documents'
   | 'Agreements'
   | 'PhotosMedia'
@@ -43,6 +45,7 @@ const MENU_ICONS = {
   Dashboard: DashboardIcon,
   Projects: ProjectsIcon,
   EstimatesInvoices: InvoicesIcon,
+  MyBills: BillsIcon,
   Documents: DocumentsIcon,
   Agreements: AgreementsIcon,
   PhotosMedia: PhotosIcon,
@@ -58,6 +61,7 @@ const MENU_ITEMS: { name: MenuRouteName; label: string }[] = [
   { name: 'Dashboard', label: 'Dashboard' },
   { name: 'Projects', label: 'Projects' },
   { name: 'EstimatesInvoices', label: 'Estimates & Invoices' },
+  { name: 'MyBills', label: 'My Bills' },
   { name: 'Documents', label: 'Documents' },
   { name: 'Agreements', label: 'Agreements' },
   { name: 'PhotosMedia', label: 'Photos & Media' },
@@ -77,6 +81,7 @@ const MENU_TO_TAB_MAP: Partial<Record<MenuRouteName, keyof AppTabParamList>> = {
   PhotosMedia: 'PhotosMediaTab',
   Profile: 'ProfileTab',
   EstimatesInvoices: 'EstimatesInvoicesTab',
+  MyBills: 'MyBillsTab',
   Documents: 'DocumentsTab',
   ServiceRequests: 'ServiceRequestsTab',
   Vendors: 'VendorsTab',

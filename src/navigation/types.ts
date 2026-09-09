@@ -13,6 +13,7 @@ export type AppTabParamList = {
   PhotosMediaTab: undefined;
   ProfileTab: undefined;
   EstimatesInvoicesTab: undefined;
+  MyBillsTab: undefined;
   DocumentsTab: undefined;
   ServiceRequestsTab: undefined;
   FinancingTab: undefined;

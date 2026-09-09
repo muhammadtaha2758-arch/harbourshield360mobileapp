@@ -6,6 +6,7 @@ export interface MobileApiUser {
   email?: string;
   phone?: string;
   avatar?: string | null;
+  avatar_url?: string | null;
   role_id?: number;
   statut?: number;
   user_type?: string;
@@ -22,6 +23,7 @@ export interface UserProfile {
   username?: string;
   phone?: string;
   avatar?: string | null;
+  avatar_url?: string | null;
   user_type?: string;
   ClientID?: number | null;
   [key: string]: unknown;
@@ -49,6 +51,7 @@ export function mapMobileApiUserToProfile(user: MobileApiUser): UserProfile {
     username: user.username,
     phone: user.phone,
     avatar: user.avatar,
+    avatar_url: user.avatar_url,
     user_type: user.user_type,
     ClientID: user.ClientID,
     role_id: user.role_id,

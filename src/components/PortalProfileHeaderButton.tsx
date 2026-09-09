@@ -1,10 +1,11 @@
 import React, { useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, type StyleProp, type ViewStyle } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { navigateToProfileTab } from '../navigation/navigateToProfileTab';
 import type { UserProfile } from '../types/auth';
 import { colors } from '../theme/colors';
+import { UserAvatar } from './UserAvatar';
 
 type Props = {
   style?: StyleProp<ViewStyle>;
@@ -13,15 +14,6 @@ type Props = {
   useFirstNameOnly?: boolean;
   displayName?: string;
 };
-
-function PersonOutlineGlyph(): React.JSX.Element {
-  return (
-    <View style={styles.personGlyph}>
-      <View style={styles.personHeadRing} />
-      <View style={styles.personShoulders} />
-    </View>
-  );
-}
 
 export function getProfileHeaderDisplayName(
   user: UserProfile | null | undefined,
@@ -76,9 +68,12 @@ export function PortalProfileHeaderButton({
       onPress={onPress}
       style={({ pressed }) => [styles.profilePill, pressed && styles.dim, style]}
     >
-      <View style={styles.avatarCircle}>
-        <PersonOutlineGlyph />
-      </View>
+      <UserAvatar
+        avatar={user?.avatar}
+        avatarUrl={user?.avatar_url}
+        size={36}
+        radius={14}
+      />
       <Text style={styles.profileName} numberOfLines={1} ellipsizeMode="tail">
         {displayName}
       </Text>
@@ -110,36 +105,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#718096',
     marginLeft: 6,
-  },
-  avatarCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 14,
-    backgroundColor: colors.avatarSoftFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  personGlyph: {
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    height: 22,
-    paddingTop: 2,
-  },
-  personHeadRing: {
-    width: 9,
-    height: 9,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: colors.primaryDark,
-  },
-  personShoulders: {
-    marginTop: 1,
-    width: 14,
-    height: 7,
-    borderBottomLeftRadius: 14,
-    borderBottomRightRadius: 14,
-    borderWidth: 1.5,
-    borderTopWidth: 0,
-    borderColor: colors.primaryDark,
   },
 });
