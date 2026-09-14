@@ -400,8 +400,14 @@ export function ProjectDetailScreen(): React.JSX.Element {
                               {items.map((item) => {
                                 const itemBusy = openingItemId === item.id || downloadingItemId === item.id;
                                 const canDownload = Boolean(item.url) && item.openAs === 'file';
+                                const isScheduleCard =
+                                  step.id === 'appointment-scheduled' ||
+                                  step.id === 'inspection-appointment';
                                 return (
-                                <View key={item.id} style={styles.documentCard}>
+                                <View
+                                  key={item.id}
+                                  style={[styles.documentCard, isScheduleCard && styles.scheduleCard]}
+                                >
                                   <Text style={styles.documentName}>{item.title}</Text>
                                   {item.lines.map((line) => (
                                     <Text key={`${item.id}-${line}`} style={styles.documentMeta}>
@@ -603,24 +609,31 @@ const styles = StyleSheet.create({
   stepTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '500' },
   stepTitleActive: { fontWeight: '700', textDecorationLine: 'underline' },
   collapseBody: {
-    marginTop: 6,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    alignSelf: 'flex-start',
-    maxWidth: '88%',
+    marginTop: 8,
+    alignSelf: 'stretch',
+    width: '100%',
   },
   stepText: { color: '#DDE8FF', fontSize: 11, lineHeight: 16 },
   documentsList: {
     marginTop: 4,
-    gap: 4,
+    gap: 8,
+    width: '100%',
+    alignSelf: 'stretch',
   },
   documentCard: {
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    width: '100%',
+    alignSelf: 'stretch',
+  },
+  scheduleCard: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
   },
   documentName: {
     color: '#111827',
@@ -659,9 +672,11 @@ const styles = StyleSheet.create({
     marginTop: 0,
     borderRadius: 12,
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     alignItems: 'center',
+    width: '100%',
+    alignSelf: 'stretch',
   },
   emptyDocumentIconWrap: {
     marginBottom: 4,

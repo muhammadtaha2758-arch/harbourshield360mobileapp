@@ -341,8 +341,12 @@ export function InvoicesScreen(): React.JSX.Element {
       toastAlert(
         'Download',
         kind === 'html'
-          ? 'Invoice saved to Downloads (HTML). Open it from Files/Downloads when needed.'
-          : 'Invoice downloaded to your Downloads folder.',
+          ? Platform.OS === 'ios'
+            ? 'Invoice saved. Use Save to Files, or find it in Files → On My iPhone → HarbourShield360MobileApp.'
+            : 'Invoice saved to Downloads (HTML). Open it from Files/Downloads when needed.'
+          : Platform.OS === 'ios'
+            ? 'Invoice saved. Use Save to Files, or find it in Files → On My iPhone → HarbourShield360MobileApp.'
+            : 'Invoice downloaded to your Downloads folder.',
       );
     } catch (error) {
       toastAlert('Download', error instanceof Error ? error.message : 'Unable to download invoice.');

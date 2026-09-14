@@ -1,10 +1,22 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, Share } from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import { env } from '../config/env';
 import { httpClient } from '../services/api/httpClient';
 import { portalService } from '../services/api/portalService';
 import type { CustomerDocument } from '../types/portal';
 import { buildInvoiceHtml } from './invoiceHtml';
+
+/**
+ * Lets the user save/share a local file via Files (Save to Files / On My iPhone).
+ * Documents are already in DocumentDir; file sharing exposes that folder in Files.
+ */
+async function presentIosSaveToFiles(path: string): Promise<void> {
+  if (Platform.OS !== 'ios') {
+    return;
+  }
+  const fileUrl = path.startsWith('file://') ? path : `file://${path}`;
+  await Share.share({ url: fileUrl });
+}
 
 function sanitizeFilename(name: string): string {
   const trimmed = name.trim().replace(/[/\\?%*:|"<>]/g, '_');
@@ -321,7 +333,9 @@ export async function viewInvoicePdf(options: {
 }
 
 /**
- * Downloads a project invoice PDF to device storage (no app chooser / open intent).
+ * Downloads a project invoice PDF to device storage.
+ * iOS: app Documents (visible in Files) + share sheet for "Save to Files".
+ * Android: Downloads folder.
  * Falls back to saving an HTML invoice if the PDF endpoint fails.
  */
 export async function downloadInvoicePdf(options: {
@@ -344,6 +358,7 @@ export async function downloadInvoicePdf(options: {
       mime: 'application/pdf',
       description: 'HarbourShield invoice',
     });
+    await presentIosSaveToFiles(savedPath);
     return 'pdf';
   } catch (pdfError) {
     try {
@@ -397,6 +412,7 @@ async function downloadInvoiceHtmlFallback(
     mime: 'text/html',
     description: 'HarbourShield invoice',
   });
+  await presentIosSaveToFiles(path);
 }
 
 async function notifyAndroidDownloadComplete(options: {

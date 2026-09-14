@@ -16,6 +16,18 @@ if linkage != nil
   use_frameworks! :linkage => linkage.to_sym
 end
 
+# RNFB pods must be static libraries when using use_frameworks + RN prebuilts,
+# otherwise Archive fails with non-modular React header includes.
+pre_install do |installer|
+  installer.pod_targets.each do |pod|
+    if ['RNFBApp', 'RNFBMessaging'].include?(pod.name)
+      def pod.build_type
+        Pod::BuildType.static_library
+      end
+    end
+  end
+end
+
 target 'HarbourShield360MobileApp' do
   config = use_native_modules!
 
@@ -36,10 +48,12 @@ target 'HarbourShield360MobileApp' do
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |build_configuration|
         deployment_target = build_configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-        next if deployment_target.nil?
-
-        if Gem::Version.new(deployment_target) < Gem::Version.new('15.1')
+        if !deployment_target.nil? && Gem::Version.new(deployment_target) < Gem::Version.new('15.1')
           build_configuration.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.1'
+        end
+
+        if target.name.start_with?('RNFB')
+          build_configuration.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
         end
       end
     end
