@@ -80,12 +80,16 @@ export function CreateMeetingRoomSheet({ visible, onClose, onCreated }: Props): 
       });
       onCreated(result.group);
       onClose();
-      toastAlert(
-        'Meeting room',
-        result.emailsFailed.length > 0
-          ? `Room created, but invitation email could not be sent to: ${result.emailsFailed.join(', ')}`
-          : 'Meeting room created and invitation email sent.',
-      );
+      if (emailsToInvite.length === 0) {
+        toastAlert('Meeting room', 'Meeting room created.');
+      } else if (result.emailsFailed.length > 0) {
+        toastAlert(
+          'Meeting room',
+          `Room created, but invitation email could not be sent to: ${result.emailsFailed.join(', ')}`,
+        );
+      } else {
+        toastAlert('Meeting room', 'Meeting room created and invitation email sent.');
+      }
     } catch (error) {
       toastAlert(
         'Meeting room',

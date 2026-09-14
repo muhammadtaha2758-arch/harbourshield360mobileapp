@@ -548,39 +548,50 @@ export const portalService = {
       return { success: true, document: doc };
     }
     try {
-      const formData = new FormData();
-      formData.append('files[]', {
-        uri: payload.uri,
-        name: payload.name || 'upload',
-        type: payload.type || 'application/octet-stream',
-      } as unknown as Blob);
-      formData.append('job_id', String(payload.jobId ?? '1'));
+      let uri = payload.uri;
+      if (uri.startsWith('/') && !uri.startsWith('file://') && !uri.startsWith('content://')) {
+        uri = `file://${uri}`;
+      }
+
+      const fields: Record<string, string> = {
+        job_id: String(payload.jobId ?? '1'),
+      };
       if (payload.folderId !== undefined && payload.folderId !== null) {
-        formData.append('folder_id', String(payload.folderId));
+        fields.folder_id = String(payload.folderId);
       }
-      const response = await httpClient.post<{
-        success?: boolean;
-        status?: string;
-        message?: string;
-        files?: CustomerDocument[];
-      }>(env.mobileDocuments.upload, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      const ok =
-        response.data.success === true ||
-        response.data.status === 'success';
+
+      // Native multipart — RN axios FormData often fails as "Network Error".
+      const url = `${env.apiBaseUrl.replace(/\/+$/, '')}/${env.mobileDocuments.upload}`;
+      const json = await postMultipartJson(
+        url,
+        {
+          fieldName: 'file',
+          uri,
+          fileName: payload.name || 'upload',
+          mime: payload.type || 'application/octet-stream',
+        },
+        fields,
+      );
+
+      const ok = json.success === true || json.status === 'success';
       if (!ok) {
-        return { success: false, message: response.data.message || 'Upload failed.' };
+        return {
+          success: false,
+          message: typeof json.message === 'string' ? json.message : 'Upload failed.',
+        };
       }
-      const doc = Array.isArray(response.data.files) ? response.data.files[0] : undefined;
-      if (doc && typeof doc === 'object' && 'id' in doc) {
+
+      const files = Array.isArray(json.files) ? json.files : [];
+      const doc = files[0];
+      if (doc && typeof doc === 'object' && doc !== null && 'id' in doc) {
         return { success: true, document: doc as CustomerDocument };
       }
-      return { success: true, message: response.data.message };
+
+      return {
+        success: true,
+        message: typeof json.message === 'string' ? json.message : undefined,
+      };
     } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
       throw getError(error, 'Unable to upload document.');
     }
   },
@@ -880,31 +891,59 @@ export const portalService = {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('request_type', payload.request_type);
-      formData.append('description', payload.description);
-      formData.append('status', 'Pending');
+      const url = `${env.apiBaseUrl.replace(/\/+$/, '')}/${env.mobileServiceRequests.create}`;
+      const files = payload.attachments ?? [];
 
-      for (const file of payload.attachments ?? []) {
-        formData.append('attachments[]', {
-          uri: file.uri,
-          name: file.name || 'attachment',
-          type: file.type || 'application/octet-stream',
-        } as unknown as Blob);
+      // No file: JSON. With file: native multipart (RN axios FormData → Network Error).
+      if (files.length === 0) {
+        const response = await httpClient.post<{
+          success?: boolean;
+          message?: string;
+          lead?: ServiceRequestJob;
+        }>(env.mobileServiceRequests.create, {
+          request_type: payload.request_type,
+          description: payload.description,
+          status: 'Pending',
+        });
+
+        return {
+          success: response.data.success === true,
+          message: response.data.message,
+          lead: response.data.lead,
+        };
       }
 
-      const response = await httpClient.post<{
-        success?: boolean;
-        message?: string;
-        lead?: ServiceRequestJob;
-      }>(env.mobileServiceRequests.create, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const first = files[0];
+      let uri = first.uri;
+      if (uri.startsWith('/') && !uri.startsWith('file://') && !uri.startsWith('content://')) {
+        uri = `file://${uri}`;
+      }
+
+      const json = await postMultipartJson(
+        url,
+        {
+          fieldName: 'attachments[]',
+          uri,
+          fileName: first.name || 'attachment',
+          mime: first.type || 'application/octet-stream',
+        },
+        {
+          request_type: payload.request_type,
+          description: payload.description,
+          status: 'Pending',
+        },
+      );
+
+      if (json.success === false) {
+        throw new Error(
+          typeof json.message === 'string' ? json.message : 'Unable to submit service request.',
+        );
+      }
 
       return {
-        success: response.data.success === true,
-        message: response.data.message,
-        lead: response.data.lead,
+        success: json.success === true,
+        message: typeof json.message === 'string' ? json.message : undefined,
+        lead: (json.lead as ServiceRequestJob | undefined) ?? undefined,
       };
     } catch (error) {
       throw getError(error, 'Unable to submit service request.');
@@ -1086,21 +1125,31 @@ export const portalService = {
       };
     }
     try {
-      const formData = new FormData();
-      if (payload.name?.trim()) {
-        formData.append('name', payload.name.trim());
+      const body: {
+        invite_source: 'mobile';
+        name?: string;
+        invite_emails?: string[];
+      } = {
+        invite_source: 'mobile',
+      };
+      const trimmedName = payload.name?.trim();
+      if (trimmedName) {
+        body.name = trimmedName;
       }
-      for (const email of payload.inviteEmails ?? []) {
-        formData.append('invite_emails[]', email);
+      const inviteEmails = (payload.inviteEmails ?? [])
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean);
+      if (inviteEmails.length > 0) {
+        body.invite_emails = inviteEmails;
       }
+
+      // JSON only — RN FormData + multipart Content-Type often fails as "Network Error".
       const response = await httpClient.post<{
         success?: boolean;
         error?: string;
         group?: ChatGroup;
         emails_failed?: string[];
-      }>(env.mobileMessages.createGroup, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      }>(env.mobileMessages.createGroup, body);
       if (response.data.success !== true || !response.data.group) {
         throw new Error(response.data.error || 'Unable to create meeting room.');
       }
@@ -1113,9 +1162,12 @@ export const portalService = {
         throw error;
       }
       const axiosError = error as AxiosError<{ error?: string; message?: string }>;
-      const serverError = axiosError.response?.data?.error;
-      if (serverError) {
-        throw new Error(serverError);
+      const data = axiosError.response?.data;
+      if (typeof data?.error === 'string' && data.error.trim()) {
+        throw new Error(data.error);
+      }
+      if (typeof data?.message === 'string' && data.message.trim()) {
+        throw new Error(data.message);
       }
       throw getError(error, 'Unable to create meeting room.');
     }
@@ -1283,25 +1335,43 @@ export const portalService = {
     }
 
     try {
-      const formData = new FormData();
-      formData.append('file', {
-        uri: payload.uri,
-        name: payload.name || 'attachment',
-        type: payload.type || 'application/octet-stream',
-      } as unknown as Blob);
-      formData.append('type', payload.attachmentType);
-
-      if (payload.groupId) {
-        formData.append('group_id', String(payload.groupId));
-      } else if (payload.receiverId) {
-        formData.append('receiver_id', String(payload.receiverId));
+      let uri = payload.uri;
+      if (uri.startsWith('/') && !uri.startsWith('file://') && !uri.startsWith('content://')) {
+        uri = `file://${uri}`;
       }
 
-      const response = await httpClient.post<ChatMessageRecord>(env.mobileMessages.upload, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
-      });
-      return response.data;
+      const fields: Record<string, string> = {
+        type: payload.attachmentType,
+      };
+      if (payload.groupId) {
+        fields.group_id = String(payload.groupId);
+      } else if (payload.receiverId) {
+        fields.receiver_id = String(payload.receiverId);
+      }
+
+      const url = `${env.apiBaseUrl.replace(/\/+$/, '')}/${env.mobileMessages.upload}`;
+      const json = await postMultipartJson(
+        url,
+        {
+          fieldName: 'file',
+          uri,
+          fileName: payload.name || 'attachment',
+          mime: payload.type || 'application/octet-stream',
+        },
+        fields,
+      );
+
+      if (json.success === false) {
+        throw new Error(
+          typeof json.message === 'string'
+            ? json.message
+            : typeof json.error === 'string'
+              ? json.error
+              : 'Unable to upload attachment.',
+        );
+      }
+
+      return json as unknown as ChatMessageRecord;
     } catch (error) {
       throw getError(error, 'Unable to upload attachment.');
     }
@@ -1470,7 +1540,7 @@ export const portalService = {
           title: String(record.title ?? 'Notification'),
           message: String(record.message ?? record.notification ?? ''),
           type: (record.type as PortalNotification['type']) ?? 'info',
-          read: Boolean(record.read),
+          read: record.read === true || record.read === 1 || record.read === '1',
           created_at: String(record.created_at ?? ''),
           notification_type:
             typeof record.notification_type === 'string' ? record.notification_type : undefined,

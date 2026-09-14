@@ -47,6 +47,7 @@ export function NotificationBellPressable({
   const [notifications, setNotifications] = useState<PortalNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [markingAll, setMarkingAll] = useState(false);
   const insets = useSafeAreaInsets();
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -81,14 +82,6 @@ export function NotificationBellPressable({
   const openModal = useCallback(async (): Promise<void> => {
     setOpen(true);
     await loadNotifications();
-    try {
-      await portalService.markNotificationsReadOnOpen();
-      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-      setUnreadCount(0);
-      await setAppBadgeCount(0);
-    } catch {
-      // Keep list visible even if mark-on-open fails
-    }
   }, [loadNotifications]);
 
   const closeModal = useCallback((): void => {
@@ -96,18 +89,25 @@ export function NotificationBellPressable({
   }, []);
 
   const markAllAsRead = useCallback(async (): Promise<void> => {
+    if (markingAll) {
+      return;
+    }
+    setMarkingAll(true);
     try {
       await portalService.markAllNotificationsRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnreadCount(0);
       await setAppBadgeCount(0);
+      toastAlert('Notifications', 'All notifications marked as read.');
     } catch (error) {
       toastAlert(
         'Notifications',
         error instanceof Error ? error.message : 'Failed to mark all as read.',
       );
+    } finally {
+      setMarkingAll(false);
     }
-  }, []);
+  }, [markingAll]);
 
   const onNotificationPress = useCallback(
     async (item: PortalNotification): Promise<void> => {
@@ -155,6 +155,8 @@ export function NotificationBellPressable({
   }, [refreshUnreadCount]);
 
   const badgeLabel = unreadCount > 99 ? '99+' : String(unreadCount);
+  const hasUnread =
+    unreadCount > 0 || notifications.some((item) => !item.read);
 
   return (
     <>
@@ -192,16 +194,25 @@ export function NotificationBellPressable({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Notifications</Text>
-              {unreadCount > 0 ? (
+              {hasUnread ? (
                 <Pressable
                   onPress={() => {
                     markAllAsRead().catch(() => undefined);
                   }}
+                  disabled={markingAll || loading}
                   hitSlop={8}
                   accessibilityRole="button"
                   accessibilityLabel="Mark all as read"
+                  style={({ pressed }) => [
+                    styles.markAllBtn,
+                    (pressed || markingAll) && styles.markAllBtnPressed,
+                  ]}
                 >
-                  <Text style={styles.markAllRead}>Mark all read</Text>
+                  {markingAll ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Text style={styles.markAllRead}>Mark all as read</Text>
+                  )}
                 </Pressable>
               ) : null}
             </View>
@@ -260,6 +271,9 @@ export function NotificationBellPressable({
 
             <Text style={styles.footerCount}>
               {notifications.length} notification{notifications.length === 1 ? '' : 's'}
+              {hasUnread
+                ? ` · ${Math.max(unreadCount, notifications.filter((n) => !n.read).length)} unread`
+                : ''}
             </Text>
 
             <Pressable
@@ -337,6 +351,16 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 18,
     fontWeight: '700',
+  },
+  markAllBtn: {
+    minHeight: 32,
+    minWidth: 110,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  markAllBtnPressed: {
+    opacity: 0.7,
   },
   markAllRead: {
     color: colors.primary,

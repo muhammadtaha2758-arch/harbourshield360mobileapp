@@ -35,6 +35,7 @@ export const env = {
   mobileInvoices: {
     list: 'mobile/invoices',
     detail: (id: number | string) => `mobile/invoices/${id}`,
+    download: (id: number | string) => `mobile/invoices/${id}/download`,
   },
 
   mobileDocuments: {

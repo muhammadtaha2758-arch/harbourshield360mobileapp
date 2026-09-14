@@ -18,7 +18,21 @@ function stripFileScheme(uri: string): string {
   return uri.replace(/^file:\/\//, '');
 }
 
+function wrapUploadPath(path: string): string {
+  // Android content:// and iOS photo-library URIs must be wrapped as-is.
+  if (/^(content|ph|assets-library):/i.test(path)) {
+    return ReactNativeBlobUtil.wrap(path);
+  }
+
+  const normalized = Platform.OS === 'ios' ? path : stripFileScheme(path);
+  return ReactNativeBlobUtil.wrap(normalized);
+}
+
 async function localPathForUpload(uri: string, fileName: string): Promise<string> {
+  if (/^(content|ph|assets-library):/i.test(uri)) {
+    return uri;
+  }
+
   const dest = `${ReactNativeBlobUtil.fs.dirs.CacheDir}/${fileName.replace(/[/\\]/g, '_')}`;
   const exists = await ReactNativeBlobUtil.fs.exists(dest);
   if (exists) {
@@ -34,7 +48,7 @@ async function localPathForUpload(uri: string, fileName: string): Promise<string
       await ReactNativeBlobUtil.fs.cp(stripped, dest);
       return dest;
     }
-    throw new Error('Could not read the selected photo.');
+    throw new Error('Could not read the selected file.');
   }
 }
 
@@ -56,17 +70,13 @@ export async function postMultipartJson(
   fields: Record<string, string> = {},
 ): Promise<Record<string, unknown>> {
   const path = await localPathForUpload(file.uri, file.fileName);
-  const wrapped = ReactNativeBlobUtil.wrap(
-    Platform.OS === 'ios' ? path : stripFileScheme(path),
-  );
-
   const parts = [
     ...Object.entries(fields).map(([name, value]) => ({ name, data: value })),
     {
       name: file.fieldName,
       filename: file.fileName,
       type: file.mime,
-      data: wrapped,
+      data: wrapUploadPath(path),
     },
   ];
 

@@ -21,6 +21,7 @@ import { NotificationBellPressable } from '../../components/NotificationBellPres
 import { PortalProfileHeaderButton } from '../../components/PortalProfileHeaderButton';
 import { portalService } from '../../services/api/portalService';
 import type { CustomerInvoiceRecord, InvoiceDisplayStatus } from '../../types/invoice';
+import { downloadInvoicePdf, viewInvoicePdf } from '../../utils/documentDownload';
 
 type InvoicesScreenNavigation = CompositeNavigationProp<
   BottomTabNavigationProp<AppTabParamList, 'EstimatesInvoicesTab'>,
@@ -207,6 +208,23 @@ function DownloadOutlineIcon({ size = 18 }: { size?: number }): React.JSX.Elemen
   );
 }
 
+function ViewOutlineIcon({ size = 18 }: { size?: number }): React.JSX.Element {
+  const stroke = size <= 16 ? 1.75 : 2;
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityLabel="View">
+      <Path
+        d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"
+        stroke={colors.primary}
+        strokeWidth={stroke}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <Circle cx="12" cy="12" r="3" stroke={colors.primary} strokeWidth={stroke} fill="none" />
+    </Svg>
+  );
+}
+
 function IconDocument({ size }: { size: number }): React.JSX.Element {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityLabel="">
@@ -235,6 +253,8 @@ export function InvoicesScreen(): React.JSX.Element {
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | number | null>(null);
+  const [viewingId, setViewingId] = useState<string | number | null>(null);
 
   const loadInvoices = useCallback(async (isRefresh = false) => {
     try {
@@ -287,22 +307,49 @@ export function InvoicesScreen(): React.JSX.Element {
   }, [activeFilter, invoices, searchQuery, sortBy]);
 
   const filterActive = activeFilter !== 'all' || sortBy !== DEFAULT_SORT;
+  const actionBusy = downloadingId != null || viewingId != null;
+
+  const handleView = useCallback(async (invoice: InvoiceItem) => {
+    if (actionBusy) {
+      return;
+    }
+
+    try {
+      setViewingId(invoice.recordId);
+      await viewInvoicePdf({
+        invoiceId: invoice.recordId,
+        fileName: `${invoice.id}.pdf`,
+      });
+    } catch (error) {
+      toastAlert('View invoice', error instanceof Error ? error.message : 'Unable to open invoice.');
+    } finally {
+      setViewingId(null);
+    }
+  }, [actionBusy]);
 
   const handleDownload = useCallback(async (invoice: InvoiceItem) => {
-    try {
-      const detail = await portalService.getInvoiceById(invoice.recordId);
-      const inv = detail.Invoice as Record<string, unknown> | undefined;
-      const amount = inv?.amount != null ? String(inv.amount) : invoice.amount;
-      const status = inv?.status != null ? String(inv.status) : invoice.rawStatus ?? invoice.status;
+    if (actionBusy) {
+      return;
+    }
 
+    try {
+      setDownloadingId(invoice.recordId);
+      const kind = await downloadInvoicePdf({
+        invoiceId: invoice.recordId,
+        fileName: `${invoice.id}.pdf`,
+      });
       toastAlert(
-        invoice.id,
-        `Amount: ${invoice.amount}\nStatus: ${status}\n\nPDF download uses the same invoice data as the web portal. Full in-app PDF view can be added next.`,
+        'Download',
+        kind === 'html'
+          ? 'Invoice saved to Downloads (HTML). Open it from Files/Downloads when needed.'
+          : 'Invoice downloaded to your Downloads folder.',
       );
     } catch (error) {
-      toastAlert('Download', error instanceof Error ? error.message : 'Unable to load invoice.');
+      toastAlert('Download', error instanceof Error ? error.message : 'Unable to download invoice.');
+    } finally {
+      setDownloadingId(null);
     }
-  }, []);
+  }, [actionBusy]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -429,12 +476,7 @@ export function InvoicesScreen(): React.JSX.Element {
           ) : null}
 
           {filteredInvoices.map((invoice) => (
-            <Pressable
-              key={invoice.id}
-              style={({ pressed }) => [styles.invoiceCard, pressed && styles.dim]}
-              accessibilityRole="button"
-              accessibilityLabel={`${invoice.id}, ${invoice.title}`}
-            >
+            <View key={invoice.id} style={styles.invoiceCard}>
               <View style={styles.invoiceRow}>
                 <InvoiceRowIcon status={invoice.status} />
                 <View style={styles.invoiceMain}>
@@ -474,19 +516,42 @@ export function InvoicesScreen(): React.JSX.Element {
                         {invoice.amount}
                       </Text>
                       <Pressable
-                        style={({ pressed }) => [styles.invoiceDownloadBtn, pressed && styles.dim]}
+                        style={({ pressed }) => [
+                          styles.invoiceActionBtn,
+                          (pressed || viewingId === invoice.recordId) && styles.dim,
+                        ]}
+                        onPress={() => void handleView(invoice)}
+                        disabled={actionBusy}
+                        accessibilityRole="button"
+                        accessibilityLabel={`View ${invoice.id}`}
+                      >
+                        {viewingId === invoice.recordId ? (
+                          <ActivityIndicator size="small" color={colors.primary} />
+                        ) : (
+                          <ViewOutlineIcon size={15} />
+                        )}
+                      </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.invoiceActionBtn,
+                          (pressed || downloadingId === invoice.recordId) && styles.dim,
+                        ]}
                         onPress={() => void handleDownload(invoice)}
+                        disabled={actionBusy}
                         accessibilityRole="button"
                         accessibilityLabel={`Download ${invoice.id}`}
                       >
-                        <DownloadOutlineIcon size={15} />
+                        {downloadingId === invoice.recordId ? (
+                          <ActivityIndicator size="small" color={colors.primary} />
+                        ) : (
+                          <DownloadOutlineIcon size={15} />
+                        )}
                       </Pressable>
-                      <Text style={styles.invoiceChevron}>›</Text>
                     </View>
                   </View>
                 </View>
               </View>
-            </Pressable>
+            </View>
           ))}
         </View>
       </ScrollView>
@@ -763,7 +828,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     minWidth: 0,
   },
-  invoiceDownloadBtn: {
+  invoiceActionBtn: {
     width: 32,
     height: 32,
     borderRadius: 8,
@@ -772,13 +837,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
-  },
-  invoiceChevron: {
-    color: '#9CA3AF',
-    fontSize: 26,
-    fontWeight: '400',
-    lineHeight: 18,
-    marginLeft: -2,
   },
   dim: { opacity: 0.88 },
 });

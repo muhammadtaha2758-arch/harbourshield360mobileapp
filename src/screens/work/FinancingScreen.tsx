@@ -1,5 +1,5 @@
 import { toastAlert } from '../../utils/toastAlert';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { DrawerActions, useNavigation } from '@react-navigation/native';
@@ -38,12 +38,6 @@ const PROJECT_TYPES = [
 ] as const;
 
 type OpenSelect = null | 'plan' | 'project' | 'address';
-
-type MenuAnchor = {
-  top: number;
-  left: number;
-  width: number;
-};
 
 function normalizeStatus(raw: string | undefined): DisplayStatus {
   const value = String(raw ?? 'pending').toLowerCase();
@@ -112,8 +106,18 @@ function projectTypeLabel(value: string | undefined): string {
 
 function jobAddress(job: CustomerJob): string {
   const addr = job.customer_address ?? job.address;
-  if (typeof addr === 'string' && addr.trim()) {
-    return addr.trim();
+  const title = job.jobs ?? job.job;
+  const addressText = typeof addr === 'string' && addr.trim() ? addr.trim() : '';
+  const titleText = typeof title === 'string' && title.trim() ? title.trim() : '';
+
+  if (titleText && addressText && addressText !== 'None') {
+    return `${titleText} — ${addressText}`;
+  }
+  if (addressText && addressText !== 'None') {
+    return addressText;
+  }
+  if (titleText) {
+    return titleText;
   }
   if (job.id != null) {
     return `Project #${job.id}`;
@@ -127,6 +131,7 @@ export function FinancingScreen(): React.JSX.Element {
   const [applications, setApplications] = useState<FinancingApplication[]>([]);
   const [plans, setPlans] = useState<FinancingPlan[]>([]);
   const [jobs, setJobs] = useState<CustomerJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -140,10 +145,6 @@ export function FinancingScreen(): React.JSX.Element {
   const [additionalNotes, setAdditionalNotes] = useState('');
 
   const [openSelect, setOpenSelect] = useState<OpenSelect>(null);
-  const [menuAnchor, setMenuAnchor] = useState<MenuAnchor | null>(null);
-  const planButtonRef = useRef<View>(null);
-  const projectButtonRef = useRef<View>(null);
-  const addressButtonRef = useRef<View>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>(DEFAULT_SORT);
@@ -159,6 +160,27 @@ export function FinancingScreen(): React.JSX.Element {
     [jobs, projectId],
   );
 
+  const loadJobs = useCallback(async (): Promise<CustomerJob[]> => {
+    setJobsLoading(true);
+    try {
+      const jobsPayload = await portalService.getJobs();
+      const jobList = jobsPayload.jobs ?? [];
+      setJobs(jobList);
+      setProjectId((prev) => {
+        if (prev && jobList.some((job) => String(job.id) === prev)) {
+          return prev;
+        }
+        return jobList.length > 0 ? String(jobList[0].id ?? '') : '';
+      });
+      return jobList;
+    } catch {
+      setJobs([]);
+      return [];
+    } finally {
+      setJobsLoading(false);
+    }
+  }, []);
+
   const load = useCallback(async (isRefresh: boolean) => {
     try {
       if (isRefresh) {
@@ -167,26 +189,44 @@ export function FinancingScreen(): React.JSX.Element {
         setLoading(true);
       }
 
-      const [apps, planList, jobsPayload] = await Promise.all([
+      // Load independently so one failure does not wipe the project list.
+      const [appsResult, plansResult] = await Promise.allSettled([
         portalService.getFinancingApplications(),
         portalService.getFinancingPlans(),
-        portalService.getJobs(),
       ]);
 
-      setApplications(apps);
-      setPlans(planList);
-      setJobs(jobsPayload.jobs ?? []);
+      if (appsResult.status === 'fulfilled') {
+        setApplications(appsResult.value);
+      } else {
+        toastAlert(
+          'Financing',
+          appsResult.reason instanceof Error
+            ? appsResult.reason.message
+            : 'Failed to load financing applications.',
+        );
+      }
 
-      setPlanId((prev) => (prev ? prev : planList.length > 0 ? String(planList[0].id) : ''));
-      const jobList = jobsPayload.jobs ?? [];
-      setProjectId((prev) => (prev ? prev : jobList.length > 0 ? String(jobList[0].id ?? '') : ''));
+      if (plansResult.status === 'fulfilled') {
+        const planList = plansResult.value;
+        setPlans(planList);
+        setPlanId((prev) => (prev ? prev : planList.length > 0 ? String(planList[0].id) : ''));
+      } else {
+        toastAlert(
+          'Financing',
+          plansResult.reason instanceof Error
+            ? plansResult.reason.message
+            : 'Failed to load financing plans.',
+        );
+      }
+
+      await loadJobs();
     } catch (error) {
       toastAlert('Financing', error instanceof Error ? error.message : 'Failed to load financing data.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [loadJobs]);
 
   useEffect(() => {
     load(false).catch(() => setLoading(false));
@@ -237,7 +277,6 @@ export function FinancingScreen(): React.JSX.Element {
 
   const closeDropdowns = useCallback(() => {
     setOpenSelect(null);
-    setMenuAnchor(null);
   }, []);
 
   const closeFinancingModal = useCallback(() => {
@@ -245,20 +284,9 @@ export function FinancingScreen(): React.JSX.Element {
     closeDropdowns();
   }, [closeDropdowns]);
 
-  const openDropdown = useCallback(
-    (key: Exclude<OpenSelect, null>, anchorRef: React.RefObject<View | null>) => {
-      if (openSelect === key) {
-        closeDropdowns();
-        return;
-      }
-
-      anchorRef.current?.measureInWindow((x, y, width, height) => {
-        setMenuAnchor({ top: y + height + 4, left: x, width });
-        setOpenSelect(key);
-      });
-    },
-    [closeDropdowns, openSelect],
-  );
+  const toggleSelect = useCallback((key: Exclude<OpenSelect, null>) => {
+    setOpenSelect((prev) => (prev === key ? null : key));
+  }, []);
 
   const resetForm = useCallback((): void => {
     setRequestedAmount('');
@@ -273,82 +301,11 @@ export function FinancingScreen(): React.JSX.Element {
     closeDropdowns();
   }, [closeDropdowns, jobs, plans]);
 
-  const renderSelectMenu = (): React.JSX.Element | null => {
-    if (!openSelect) {
-      return null;
-    }
-
-    if (openSelect === 'plan') {
-      return (
-        <ScrollView style={styles.selectMenuScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-          {plans.map((plan) => (
-            <Pressable
-              key={String(plan.id)}
-              style={styles.selectItem}
-              onPress={() => {
-                setPlanId(String(plan.id));
-                closeDropdowns();
-              }}
-            >
-              <Text style={styles.selectItemText}>
-                {plan.name}
-                {plan.interest_rate != null ? ` (${plan.interest_rate}% APR)` : ''}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      );
-    }
-
-    if (openSelect === 'project') {
-      return (
-        <ScrollView style={styles.selectMenuScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-          {PROJECT_TYPES.map((type) => (
-            <Pressable
-              key={type.value}
-              style={styles.selectItem}
-              onPress={() => {
-                setProjectType(type.value);
-                closeDropdowns();
-              }}
-            >
-              <Text style={styles.selectItemText}>{type.label}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-      );
-    }
-
-    if (jobs.length === 0) {
-      return (
-        <View style={styles.selectItem}>
-          <Text style={styles.selectItemText}>No projects found</Text>
-        </View>
-      );
-    }
-
-    return (
-      <ScrollView style={styles.selectMenuScroll} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-        {jobs.map((job) => (
-          <Pressable
-            key={String(job.id)}
-            style={styles.selectItem}
-            onPress={() => {
-              setProjectId(String(job.id ?? ''));
-              closeDropdowns();
-            }}
-          >
-            <Text style={styles.selectItemText}>{jobAddress(job)}</Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-    );
-  };
-
   const openCreateModal = useCallback(() => {
     resetForm();
     setModalOpen(true);
-  }, [resetForm]);
+    loadJobs().catch(() => undefined);
+  }, [loadJobs, resetForm]);
 
   const onSubmitRequest = useCallback(async () => {
     const amount = parseAmountInput(requestedAmount);
@@ -641,8 +598,8 @@ export function FinancingScreen(): React.JSX.Element {
               />
 
               <Text style={styles.fieldLabel}>Financing Plan *</Text>
-              <View ref={planButtonRef} collapsable={false} style={styles.selectWrap}>
-                <Pressable style={styles.selectButton} onPress={() => openDropdown('plan', planButtonRef)}>
+              <View style={styles.selectWrap}>
+                <Pressable style={styles.selectButton} onPress={() => toggleSelect('plan')}>
                   <Text style={styles.selectText} numberOfLines={1}>
                     {selectedPlan
                       ? `${selectedPlan.name}${selectedPlan.interest_rate != null ? ` (${selectedPlan.interest_rate}% APR)` : ''}`
@@ -650,24 +607,100 @@ export function FinancingScreen(): React.JSX.Element {
                   </Text>
                   <Text style={styles.selectChevron}>{openSelect === 'plan' ? '▴' : '▾'}</Text>
                 </Pressable>
+                {openSelect === 'plan' ? (
+                  <View style={styles.inlineSelectMenu}>
+                    {plans.map((plan) => (
+                      <Pressable
+                        key={String(plan.id)}
+                        style={styles.selectItem}
+                        onPress={() => {
+                          setPlanId(String(plan.id));
+                          closeDropdowns();
+                        }}
+                      >
+                        <Text style={styles.selectItemText}>
+                          {plan.name}
+                          {plan.interest_rate != null ? ` (${plan.interest_rate}% APR)` : ''}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
               </View>
 
               <Text style={styles.fieldLabel}>Project Type *</Text>
-              <View ref={projectButtonRef} collapsable={false} style={styles.selectWrap}>
-                <Pressable style={styles.selectButton} onPress={() => openDropdown('project', projectButtonRef)}>
+              <View style={styles.selectWrap}>
+                <Pressable style={styles.selectButton} onPress={() => toggleSelect('project')}>
                   <Text style={styles.selectText}>{projectTypeLabel(projectType)}</Text>
                   <Text style={styles.selectChevron}>{openSelect === 'project' ? '▴' : '▾'}</Text>
                 </Pressable>
+                {openSelect === 'project' ? (
+                  <View style={styles.inlineSelectMenu}>
+                    {PROJECT_TYPES.map((type) => (
+                      <Pressable
+                        key={type.value}
+                        style={styles.selectItem}
+                        onPress={() => {
+                          setProjectType(type.value);
+                          closeDropdowns();
+                        }}
+                      >
+                        <Text style={styles.selectItemText}>{type.label}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
               </View>
 
               <Text style={styles.fieldLabel}>Project Address *</Text>
-              <View ref={addressButtonRef} collapsable={false} style={styles.selectWrap}>
-                <Pressable style={styles.selectButton} onPress={() => openDropdown('address', addressButtonRef)}>
+              <View style={styles.selectWrap}>
+                <Pressable style={styles.selectButton} onPress={() => toggleSelect('address')}>
                   <Text style={styles.selectText} numberOfLines={2}>
-                    {selectedJob ? jobAddress(selectedJob) : jobs.length === 0 ? 'No projects available' : 'Select project'}
+                    {jobsLoading
+                      ? 'Loading projects…'
+                      : selectedJob
+                        ? jobAddress(selectedJob)
+                        : jobs.length === 0
+                          ? 'No projects available'
+                          : 'Select project'}
                   </Text>
                   <Text style={styles.selectChevron}>{openSelect === 'address' ? '▴' : '▾'}</Text>
                 </Pressable>
+                {openSelect === 'address' ? (
+                  <View style={styles.inlineSelectMenu}>
+                    {jobsLoading ? (
+                      <View style={styles.selectItem}>
+                        <ActivityIndicator color={colors.primary} />
+                      </View>
+                    ) : jobs.length === 0 ? (
+                      <View style={styles.selectItem}>
+                        <Text style={styles.selectItemText}>No projects found</Text>
+                      </View>
+                    ) : (
+                      <ScrollView
+                        style={styles.inlineSelectScroll}
+                        nestedScrollEnabled
+                        keyboardShouldPersistTaps="handled"
+                      >
+                        {jobs.map((job) => (
+                          <Pressable
+                            key={String(job.id)}
+                            style={[
+                              styles.selectItem,
+                              String(job.id) === projectId ? styles.selectItemActive : null,
+                            ]}
+                            onPress={() => {
+                              setProjectId(String(job.id ?? ''));
+                              closeDropdowns();
+                            }}
+                          >
+                            <Text style={styles.selectItemText}>{jobAddress(job)}</Text>
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+                    )}
+                  </View>
+                ) : null}
               </View>
 
               <Text style={styles.fieldLabel}>Additional Notes</Text>
@@ -694,25 +727,6 @@ export function FinancingScreen(): React.JSX.Element {
               </Pressable>
             </ScrollView>
           </View>
-
-          {openSelect && menuAnchor ? (
-            <>
-              <Pressable
-                style={styles.dropdownBackdrop}
-                onPress={closeDropdowns}
-                accessibilityRole="button"
-                accessibilityLabel="Close menu"
-              />
-              <View
-                style={[
-                  styles.selectMenuOverlay,
-                  { top: menuAnchor.top, left: menuAnchor.left, width: menuAnchor.width },
-                ]}
-              >
-                {renderSelectMenu()}
-              </View>
-            </>
-          ) : null}
         </View>
       </Modal>
       <ListFilterSheet
@@ -798,31 +812,22 @@ const styles = StyleSheet.create({
   modalScrollContent: { paddingBottom: 8 },
   fieldLabel: { color: '#344054', fontSize: 12, fontWeight: '700', marginTop: 10, marginBottom: 6 },
   fieldInput: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#D7E0EE', backgroundColor: '#F9FBFF', color: '#24334E', fontSize: 13, paddingHorizontal: 12, paddingVertical: 10 },
-  dropdownBackdrop: {
-    ...StyleSheet.absoluteFill,
-    zIndex: 40,
-  },
-  selectMenuOverlay: {
-    position: 'absolute',
-    zIndex: 50,
-    maxHeight: 220,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#DDE3EE',
-    overflow: 'hidden',
-    elevation: 24,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-  },
-  selectMenuScroll: { maxHeight: 220 },
   selectWrap: { marginBottom: 4 },
   selectButton: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: '#D7E0EE', backgroundColor: '#F9FBFF', paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   selectText: { color: '#24334E', fontSize: 13, fontWeight: '600', flex: 1, paddingRight: 10 },
   selectChevron: { color: '#24334E', fontSize: 12, fontWeight: '700' },
+  inlineSelectMenu: {
+    marginTop: 6,
+    maxHeight: 200,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#DDE3EE',
+    backgroundColor: '#FFFFFF',
+    overflow: 'hidden',
+  },
+  inlineSelectScroll: { maxHeight: 200 },
   selectItem: { paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#EEF2F8' },
+  selectItemActive: { backgroundColor: '#EEF4FF' },
   selectItemText: { color: '#344054', fontSize: 13, fontWeight: '500' },
   notesInput: { minHeight: 90, borderRadius: 12, borderWidth: 1, borderColor: '#D7E0EE', backgroundColor: '#F9FBFF', color: '#24334E', fontSize: 13, textAlignVertical: 'top', paddingHorizontal: 12, paddingVertical: 10 },
   submitBtn: { marginTop: 14, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
